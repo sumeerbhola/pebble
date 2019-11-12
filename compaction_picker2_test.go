@@ -14,7 +14,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/datadriven"
 )
 
-func loadVersion(d *datadriven.TestData) (*version, *Options, string) {
+func loadVersion2(d *datadriven.TestData) (*version, *Options, string) {
 	opts := &Options{}
 	opts.EnsureDefaults()
 
@@ -62,19 +62,19 @@ func loadVersion(d *datadriven.TestData) (*version, *Options, string) {
 	return vers, opts, ""
 }
 
-func TestCompactionPickerLevelMaxBytes(t *testing.T) {
-	datadriven.RunTest(t, "testdata/compaction_picker_level_max_bytes",
+func TestCompactionPicker2LevelMaxBytes(t *testing.T) {
+	datadriven.RunTest(t, "testdata/compaction_picker_level_max_bytes2",
 		func(d *datadriven.TestData) string {
 			switch d.Cmd {
 			case "init":
-				vers, opts, errMsg := loadVersion(d)
+				vers, opts, errMsg := loadVersion2(d)
 				if errMsg != "" {
 					return errMsg
 				}
 
-				p := newCompactionPicker(vers, opts, 1, nil)
+				p := newCompactionPicker2(vers, opts, 1, nil)
 				var buf bytes.Buffer
-				for level := p.baseLevel; level < numLevels; level++ {
+				for level := p.currBaseLevel; level < numLevels; level++ {
 					fmt.Fprintf(&buf, "%d: %d\n", level, p.levelMaxBytes[level])
 				}
 				return buf.String()
@@ -85,17 +85,17 @@ func TestCompactionPickerLevelMaxBytes(t *testing.T) {
 		})
 }
 
-func TestCompactionPickerTargetLevel(t *testing.T) {
-	datadriven.RunTest(t, "testdata/compaction_picker_target_level",
+func TestCompactionPicker2TargetLevel(t *testing.T) {
+	datadriven.RunTest(t, "testdata/compaction_picker_target_level2",
 		func(d *datadriven.TestData) string {
 			switch d.Cmd {
 			case "pick":
-				vers, opts, errMsg := loadVersion(d)
+				vers, opts, errMsg := loadVersion2(d)
 				if errMsg != "" {
 					return errMsg
 				}
 
-				p := newCompactionPicker(vers, opts, 1, nil)
+				p := newCompactionPicker2(vers, opts, 1, nil)
 				if len(p.compactionQueue) > 0 {
 					return fmt.Sprintf("%d: %.1f\n", p.compactionQueue[0].level, p.compactionQueue[0].score)
 				}
@@ -107,18 +107,18 @@ func TestCompactionPickerTargetLevel(t *testing.T) {
 		})
 }
 
-func TestCompactionPickerEstimatedCompactionDebt(t *testing.T) {
-	datadriven.RunTest(t, "testdata/compaction_picker_estimated_debt",
+func TestCompactionPicker2EstimatedCompactionDebt(t *testing.T) {
+	datadriven.RunTest(t, "testdata/compaction_picker_estimated_debt2",
 		func(d *datadriven.TestData) string {
 			switch d.Cmd {
 			case "init":
-				vers, opts, errMsg := loadVersion(d)
+				vers, opts, errMsg := loadVersion2(d)
 				if errMsg != "" {
 					return errMsg
 				}
 				opts.MemTableSize = 1000
 
-				p := newCompactionPicker(vers, opts, 1, nil)
+				p := newCompactionPicker2(vers, opts, 1, nil)
 				return fmt.Sprintf("%d\n", p.estimatedCompactionDebt(0))
 
 			default:

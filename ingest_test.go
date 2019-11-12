@@ -481,7 +481,7 @@ func TestIngestTargetLevel(t *testing.T) {
 			var buf bytes.Buffer
 			for _, target := range strings.Split(d.Input, "\n") {
 				meta := parseMeta(target)
-				level := ingestTargetLevel(cmp, vers, compactions, &meta)
+				level := ingestTargetLevel(cmp, vers, 1, compactions, &meta)
 				fmt.Fprintf(&buf, "%d\n", level)
 			}
 			return buf.String()

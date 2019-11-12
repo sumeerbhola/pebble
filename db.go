@@ -259,9 +259,9 @@ type DB struct {
 		}
 
 		compact struct {
-			cond       sync.Cond
-			flushing   bool
-			compacting bool
+			cond            sync.Cond
+			flushing        bool
+			compactingCount int
 			// The list of manual compactions. The next manual compaction to perform
 			// is at the start of the list. New entries are added to the end.
 			manual []*manualCompaction
@@ -758,7 +758,7 @@ func (d *DB) Close() error {
 		panic(ErrClosed)
 	}
 	atomic.StoreInt32(&d.closed, 1)
-	for d.mu.compact.compacting || d.mu.compact.flushing {
+	for d.mu.compact.compactingCount > 0 || d.mu.compact.flushing {
 		d.mu.compact.cond.Wait()
 	}
 	var err error
@@ -959,8 +959,9 @@ func (d *DB) Metrics() *Metrics {
 	metrics.WAL.BytesWritten = metrics.Levels[0].BytesIn + metrics.WAL.Size
 	metrics.Levels[0].Score = float64(metrics.Levels[0].NumFiles) / float64(d.opts.L0CompactionThreshold)
 	if p := d.mu.versions.picker; p != nil {
+		lmb := p.getLevelMaxBytes()
 		for level := 1; level < numLevels; level++ {
-			metrics.Levels[level].Score = float64(metrics.Levels[level].Size) / float64(p.levelMaxBytes[level])
+			metrics.Levels[level].Score = float64(metrics.Levels[level].Size) / float64(lmb[level])
 		}
 	}
 	metrics.Table.ZombieCount = int64(len(d.mu.versions.zombieTables))
@@ -1294,6 +1295,36 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 		}
 		force = false
 	}
+}
+
+type inProgressCompactionInfoImpl struct {
+	c *compaction
+}
+
+var _ inProgressCompactionInfo = &inProgressCompactionInfoImpl{}
+
+func (c inProgressCompactionInfoImpl) inputLevel() int {
+	return c.c.startLevel
+}
+func (c inProgressCompactionInfoImpl) outputLevel() int {
+	return c.c.outputLevel
+}
+func (c inProgressCompactionInfoImpl) smallest() *InternalKey {
+	return &c.c.smallest
+}
+func (c inProgressCompactionInfoImpl) largest() *InternalKey {
+	return &c.c.largest
+}
+
+func (d *DB) getInProgressCompactionInfoLocked(
+	finishing *compaction,
+) (rv []inProgressCompactionInfo) {
+	for c := range d.mu.compact.inProgress {
+		if c.outputLevel > 0 && (finishing == nil || c != finishing) {
+			rv = append(rv, inProgressCompactionInfoImpl{c: c})
+		}
+	}
+	return
 }
 
 // firstError returns the first non-nil error of err0 and err1, or nil if both

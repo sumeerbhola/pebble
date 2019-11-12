@@ -47,7 +47,7 @@ type versionSet struct {
 
 	// Mutable fields.
 	versions versionList
-	picker   *compactionPicker
+	picker   compactionPickerInterface
 
 	metrics Metrics
 
@@ -109,7 +109,7 @@ func (vs *versionSet) create(
 	vs.init(dirname, opts, mu)
 	newVersion := &version{}
 	vs.append(newVersion)
-	vs.picker = newCompactionPicker(newVersion, vs.opts)
+	vs.picker = newCompactionPicker(newVersion, vs.opts, 1, nil)
 
 	// Note that a "snapshot" version edit is written to the manifest when it is
 	// created.
@@ -241,7 +241,7 @@ func (vs *versionSet) load(dirname string, opts *Options, mu *sync.Mutex) error 
 	}
 	vs.append(newVersion)
 
-	vs.picker = newCompactionPicker(newVersion, vs.opts)
+	vs.picker = newCompactionPicker(newVersion, vs.opts, 1, nil)
 
 	for i := range vs.metrics.Levels {
 		l := &vs.metrics.Levels[i]
@@ -292,7 +292,11 @@ func (vs *versionSet) logUnlock() {
 // (see logLock). Will unconditionally release the manifest lock (via
 // logUnlock) even if an error occurs.
 func (vs *versionSet) logAndApply(
-	jobID int, ve *versionEdit, metrics map[int]*LevelMetrics, dir vfs.File,
+	jobID int,
+	ve *versionEdit,
+	metrics map[int]*LevelMetrics,
+	dir vfs.File,
+	inProgressCompactions func() []inProgressCompactionInfo,
 ) error {
 	if !vs.writing {
 		vs.opts.Logger.Fatalf("MANIFEST not locked for writing")
@@ -326,7 +330,7 @@ func (vs *versionSet) logAndApply(
 		newManifestFileNum = vs.getNextFileNum()
 	}
 
-	var picker *compactionPicker
+	var picker compactionPickerInterface
 	var zombies map[uint64]uint64
 	if err := func() error {
 		vs.mu.Unlock()
@@ -389,15 +393,19 @@ func (vs *versionSet) logAndApply(
 				FileNum: newManifestFileNum,
 			})
 		}
-		picker = newCompactionPicker(newVersion, vs.opts)
-		if !vs.dynamicBaseLevel {
-			picker.baseLevel = 1
-		}
 		return nil
 	}(); err != nil {
 		return err
 	}
 
+	// TODO: make the picker type configurable?
+	picker = newCompactionPicker2(newVersion, vs.opts, vs.opts.NumConcurrentCompactions, inProgressCompactions())
+	/*
+		picker = newCompactionPicker(newVersion, vs.opts)
+		if !vs.dynamicBaseLevel {
+			picker.baseLevel = 1
+		}
+	*/
 	// Update the zombie tables set first, as installation of the new version
 	// will unref the previous version which could result in addObsoleteLocked
 	// being called.

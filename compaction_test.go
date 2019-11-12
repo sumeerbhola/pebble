@@ -37,7 +37,7 @@ func TestPickCompaction(t *testing.T) {
 	testCases := []struct {
 		desc    string
 		version version
-		picker  compactionPicker
+		picker  compactionPickerTest
 		want    string
 	}{
 		{
@@ -71,7 +71,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -99,7 +99,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -127,7 +127,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -155,7 +155,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -191,7 +191,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -253,7 +253,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     0,
 				baseLevel: 1,
@@ -307,7 +307,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     1,
 				baseLevel: 1,
@@ -361,7 +361,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     1,
 				baseLevel: 1,
@@ -415,7 +415,7 @@ func TestPickCompaction(t *testing.T) {
 					},
 				},
 			},
-			picker: compactionPicker{
+			picker: compactionPickerTest{
 				score:     99,
 				level:     1,
 				baseLevel: 1,
@@ -433,7 +433,7 @@ func TestPickCompaction(t *testing.T) {
 		vs.versions.Init(nil)
 		vs.append(&tc.version)
 		vs.picker = &tc.picker
-		vs.picker.vers = &tc.version
+		tc.picker.vers = &tc.version
 
 		c, got := vs.picker.pickAuto(opts, new(uint64)), ""
 		if c != nil {

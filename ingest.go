@@ -295,7 +295,7 @@ func ingestUpdateSeqNum(opts *Options, dirname string, seqNum uint64, meta []*fi
 }
 
 func ingestTargetLevel(
-	cmp Compare, v *version, compactions map[*compaction]struct{}, meta *fileMetadata,
+	cmp Compare, v *version, baseLevel int, compactions map[*compaction]struct{}, meta *fileMetadata,
 ) int {
 	// Find the lowest level which does not have any files which overlap meta. We
 	// search from L0 to L6 looking for whether there are any files in the level
@@ -308,7 +308,7 @@ func ingestTargetLevel(
 		return 0
 	}
 
-	level := 1
+	level := baseLevel
 	for ; level < numLevels; level++ {
 		if len(v.Overlaps(level, cmp, meta.Smallest.UserKey, meta.Largest.UserKey)) != 0 {
 			break
@@ -328,7 +328,11 @@ func ingestTargetLevel(
 			break
 		}
 	}
-	return level - 1
+	targetLevel := level - 1
+	if targetLevel < baseLevel {
+		targetLevel = 0
+	}
+	return targetLevel
 }
 
 // Ingest ingests a set of sstables into the DB. Ingestion of the files is
@@ -520,7 +524,7 @@ func (d *DB) ingestApply(jobID int, meta []*fileMetadata) (*versionEdit, error) 
 		// overlap any existing files in the level.
 		m := meta[i]
 		f := &ve.NewFiles[i]
-		f.Level = ingestTargetLevel(d.cmp, current, d.mu.compact.inProgress, m)
+		f.Level = ingestTargetLevel(d.cmp, current, d.mu.versions.picker.getBaseLevel(), d.mu.compact.inProgress, m)
 		f.Meta = *m
 		levelMetrics := metrics[f.Level]
 		if levelMetrics == nil {
@@ -530,7 +534,8 @@ func (d *DB) ingestApply(jobID int, meta []*fileMetadata) (*versionEdit, error) 
 		levelMetrics.BytesIngested += m.Size
 		levelMetrics.TablesIngested++
 	}
-	if err := d.mu.versions.logAndApply(jobID, ve, metrics, d.dataDir); err != nil {
+	if err := d.mu.versions.logAndApply(
+		jobID, ve, metrics, d.dataDir, func() []inProgressCompactionInfo { return d.getInProgressCompactionInfoLocked(nil) }); err != nil {
 		return nil, err
 	}
 	var checker func() error

@@ -423,7 +423,11 @@ func TestIteratorTableFilter(t *testing.T) {
 
 			d.mu.Lock()
 			// Disable the "dynamic base level" code for this test.
-			d.mu.versions.picker.baseLevel = 1
+			// TODO(sbhola): hack
+			picker, ok := d.mu.versions.picker.(*compactionPicker)
+			if ok {
+				picker.baseLevel = 1
+			}
 			s := d.mu.versions.currentVersion().DebugString(base.DefaultFormatter)
 			d.mu.Unlock()
 			return s

@@ -284,6 +284,8 @@ type Options struct {
 	// threshold is reached.
 	L0StopWritesThreshold int
 
+	NumConcurrentCompactions int
+
 	// The maximum number of bytes for LBase. The base level is the level which
 	// L0 is compacted into. The base level is determined dynamically based on
 	// the existing data in the LSM. The maximum number of bytes for other levels
@@ -407,6 +409,9 @@ func (o *Options) EnsureDefaults() *Options {
 	}
 	if o.L0StopWritesThreshold <= 0 {
 		o.L0StopWritesThreshold = 12
+	}
+	if o.NumConcurrentCompactions <= 0 {
+		o.NumConcurrentCompactions = 2
 	}
 	if o.LBaseMaxBytes <= 0 {
 		o.LBaseMaxBytes = 64 << 20 // 64 MB
