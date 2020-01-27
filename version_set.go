@@ -109,7 +109,7 @@ func (vs *versionSet) create(
 	vs.init(dirname, opts, mu)
 	newVersion := &version{}
 	vs.append(newVersion)
-	vs.picker = newCompactionPicker(newVersion, vs.opts, nil)
+	vs.picker = newCompactionPicker2(newVersion, vs.opts, nil)
 
 	// Note that a "snapshot" version edit is written to the manifest when it is
 	// created.
@@ -241,7 +241,7 @@ func (vs *versionSet) load(dirname string, opts *Options, mu *sync.Mutex) error 
 	}
 	vs.append(newVersion)
 
-	vs.picker = newCompactionPicker(newVersion, vs.opts, nil)
+	vs.picker = newCompactionPicker2(newVersion, vs.opts, nil)
 
 	for i := range vs.metrics.Levels {
 		l := &vs.metrics.Levels[i]
@@ -421,7 +421,7 @@ func (vs *versionSet) logAndApply(
 		}
 		vs.manifestFileNum = newManifestFileNum
 	}
-	vs.picker = newCompactionPicker(newVersion, vs.opts, inProgressCompactions())
+	vs.picker = newCompactionPicker2(newVersion, vs.opts, inProgressCompactions())
 	if !vs.dynamicBaseLevel {
 		vs.picker.forceBaseLevel1()
 	}
