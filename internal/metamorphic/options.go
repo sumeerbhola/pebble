@@ -84,6 +84,91 @@ type testOptions struct {
 func standardOptions() []*testOptions {
 	// The index labels are not strictly necessary, but they make it easier to
 	// find which options correspond to a failure.
+	/*
+	   	stdOpts := []string{
+	   		0: "", // default options
+	   		1: `
+	   [Options]
+	     cache_size=1
+	   `,
+	   		2: `
+	   [Options]
+	     disable_wal=true
+	   `,
+	   		3: `
+	   [Options]
+	     l0_compaction_threshold=1
+	   `,
+	   		4: `
+	   [Options]
+	     l0_compaction_threshold=1
+	     l0_stop_writes_threshold=1
+	   `,
+	   		5: `
+	   [Options]
+	     lbase_max_bytes=1
+	   `,
+	   		6: `
+	   [Options]
+	     max_manifest_file_size=1
+	   `,
+	   		7: `
+	   [Options]
+	     max_open_files=1
+	   `,
+	   		8: `
+	   [Options]
+	     mem_table_size=1000
+	   `,
+	   		9: `
+	   [Options]
+	     mem_table_stop_writes_threshold=2
+	   `,
+	   		10: `
+	   [Options]
+	     wal_dir=wal
+	   `,
+	   		11: `
+	   [Level "0"]
+	     block_restart_interval=1
+	   `,
+	   		12: `
+	   [Level "0"]
+	     block_size=1
+	   `,
+	   		13: `
+	   [Level "0"]
+	     compression=NoCompression
+	   `,
+	   		14: `
+	   [Level "0"]
+	     index_block_size=1
+	   `,
+	   		15: `
+	   [Level "0"]
+	     target_file_size=1
+	   `,
+	   		16: `
+	   [Level "0"]
+	     filter_policy=none
+	   `,
+	   		// 1GB
+	   		17: `
+	   [Options]
+	     bytes_per_sync=1073741824
+	   [TestOptions]
+	     strictfs=true
+	   `,
+	   		18: `
+	   [Options]
+	     max_concurrent_compactions=2
+	   `,
+	   		19: `
+	   [TestOptions]
+	     ingest_using_apply=true
+	   `,
+	   	}
+	*/
 	stdOpts := []string{
 		0: "", // default options
 		1: `
@@ -92,79 +177,27 @@ func standardOptions() []*testOptions {
 `,
 		2: `
 [Options]
-  disable_wal=true
+  l0_compaction_threshold=1
 `,
 		3: `
 [Options]
-  l0_compaction_threshold=1
-`,
-		4: `
-[Options]
-  l0_compaction_threshold=1
-  l0_stop_writes_threshold=1
-`,
-		5: `
-[Options]
   lbase_max_bytes=1
 `,
-		6: `
-[Options]
-  max_manifest_file_size=1
-`,
-		7: `
-[Options]
-  max_open_files=1
-`,
-		8: `
-[Options]
-  mem_table_size=1000
-`,
-		9: `
-[Options]
-  mem_table_stop_writes_threshold=2
-`,
-		10: `
-[Options]
-  wal_dir=wal
-`,
-		11: `
+		4: `
 [Level "0"]
   block_restart_interval=1
 `,
-		12: `
+		5: `
 [Level "0"]
-  block_size=1
+  block_size=1000
 `,
-		13: `
+		6: `
 [Level "0"]
-  compression=NoCompression
+  index_block_size=1000
 `,
-		14: `
-[Level "0"]
-  index_block_size=1
-`,
-		15: `
+		7: `
 [Level "0"]
   target_file_size=1
-`,
-		16: `
-[Level "0"]
-  filter_policy=none
-`,
-		// 1GB
-		17: `
-[Options]
-  bytes_per_sync=1073741824
-[TestOptions]
-  strictfs=true
-`,
-		18: `
-[Options]
-  max_concurrent_compactions=2
-`,
-		19: `
-[TestOptions]
-  ingest_using_apply=true
 `,
 	}
 

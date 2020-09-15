@@ -21,6 +21,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/base"
 	"github.com/cockroachdb/pebble/internal/errorfs"
 	"github.com/cockroachdb/pebble/internal/randvar"
+	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/stretchr/testify/require"
@@ -53,8 +54,8 @@ var (
 		"keep the DB directory even on successful runs")
 	seed = flag.Uint64("seed", uint64(time.Now().UnixNano()),
 		"a pseudorandom number generator seed")
-	ops    = randvar.NewFlag("uniform:5000-10000")
-	runDir = flag.String("run-dir", "",
+	ops    = randvar.NewFlag("uniform:10000-20000")
+	runDir = flag.String("run-dir", "/Users/sumeer/go/src/github.com/cockroachdb/pebble/internal/metamorphic/_meta/200916-153748.871/standard-005/",
 		"the specific configuration to (re-)run (used for post-mortem debugging)")
 )
 
@@ -126,7 +127,14 @@ func testMetaRun(t *testing.T, runDir string) {
 			os.Exit(1)
 		}
 	}
-
+	statsPath := filepath.Join(runDir, "stats")
+	statsFile, err := os.Create(statsPath)
+	require.NoError(t, err)
+	defer statsFile.Close()
+	fmt.Fprintf(statsFile, "Bounds(tot,ge,le): %d,%d,%d;seekge(tot, opt): %d,%d;seeklt(tot, opt): %d,%d\n",
+		sstable.SetBoundsCount, sstable.SetBoundsCmpGECount, sstable.SetBoundsCmpLECount,
+		sstable.SeekGECount, sstable.SeekGEOptCount, sstable.SeekLTCount, sstable.SeekLTOptCount,
+	)
 	if *keep && !*disk {
 		m.maybeSaveData()
 	}
@@ -242,16 +250,18 @@ func TestMeta(t *testing.T) {
 		})
 	}
 
-	// Perform runs with random options.
-	for i := 0; i < 20; i++ {
-		name := fmt.Sprintf("random-%03d", i)
-		names = append(names, name)
-		opts := randomOptions(rng)
-		options[name] = opts
-		t.Run(name, func(t *testing.T) {
-			runOptions(t, opts)
-		})
-	}
+	/*
+		// Perform runs with random options.
+		for i := 0; i < 20; i++ {
+			name := fmt.Sprintf("random-%03d", i)
+			names = append(names, name)
+			opts := randomOptions(rng)
+			options[name] = opts
+			t.Run(name, func(t *testing.T) {
+				runOptions(t, opts)
+			})
+		}
+	*/
 
 	// Don't bother comparing output if we've already failed.
 	if t.Failed() {

@@ -12,6 +12,11 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+type iterBounds struct {
+	lower []byte
+	upper []byte
+}
+
 type generator struct {
 	rng *rand.Rand
 
@@ -29,7 +34,8 @@ type generator struct {
 	// liveBatches contains the live indexed and write-only batches.
 	liveBatches objIDSlice
 	// liveIters contains the live iterators.
-	liveIters objIDSlice
+	liveIters       objIDSlice
+	itersLastBounds map[objID]iterBounds
 	// liveReaders contains the DB, and any live indexed batches and snapshots. The DB is always
 	// at index 0.
 	liveReaders objIDSlice
@@ -345,24 +351,115 @@ func (g *generator) iterSetBounds() {
 		return
 	}
 
-	// Generate lower/upper bounds with a 50% probability.
+	iterID := g.liveIters.rand(g.rng)
+	if g.itersLastBounds == nil {
+		g.itersLastBounds = make(map[objID]iterBounds)
+	}
+	iterLastBounds := g.itersLastBounds[iterID]
+	// TODO: can't generate nil for either lower or upper since that will get turned to ""
+	// when written and parsed.
 	var lower, upper []byte
-	if g.rng.Float64() <= 0.5 {
-		// Generate a new key with a .1% probability.
-		lower = g.randKey(0.001)
+	// genLower := g.rng.Float64() <= 0.9
+	// genUpper := g.rng.Float64() <= 0.9
+	genLower := true
+	genUpper := true
+	var ensureLowerGT, ensureUpperLT bool
+	if genLower && iterLastBounds.upper != nil {
+		ensureLowerGT = true
 	}
-	if g.rng.Float64() <= 0.5 {
-		// Generate a new key with a .1% probability.
-		upper = g.randKey(0.001)
+	if (!ensureLowerGT || g.rng.Float64() < 0.5) && genUpper && iterLastBounds.lower != nil {
+		ensureUpperLT = true
+		ensureLowerGT = false
 	}
-	if bytes.Compare(lower, upper) > 0 {
-		lower, upper = upper, lower
+	attempts := 0
+	for {
+		//fmt.Printf("lower(%t): %s, upper(%t): %s\n", lower != nil, hex.EncodeToString(lower),
+		//	upper != nil, hex.EncodeToString(upper))
+		attempts++
+		if genLower {
+			lower = g.randKey(0.001)
+		}
+		if genUpper {
+			// Generate a new key with a .1% probability.
+			upper = g.randKey(0.001)
+		}
+		if bytes.Compare(lower, upper) > 0 {
+			lower, upper = upper, lower
+		}
+		if ensureLowerGT && iterLastBounds.upper != nil && bytes.Compare(iterLastBounds.upper, lower) > 0 {
+			if attempts < 25 {
+				continue
+			}
+			lower = iterLastBounds.upper
+			upper = lower
+			break
+		}
+		if ensureUpperLT && iterLastBounds.lower != nil && bytes.Compare(upper, iterLastBounds.lower) > 0 {
+			if attempts < 25 {
+				continue
+			}
+			upper = iterLastBounds.lower
+			lower = upper
+			break
+		}
+		break
+	}
+	// fmt.Printf("%d: eventual lower(%t): %s, upper(%t): %s\n",
+	//	len(g.ops), lower != nil, hex.EncodeToString(lower),
+	//	upper != nil, hex.EncodeToString(upper))
+	// if lower != nil && upper != nil && bytes.Compare(lower, upper) > 0 {
+	//	panic("incorrect bounds")
+	// }
+	g.itersLastBounds[iterID] = iterBounds{
+		lower: lower,
+		upper: upper,
 	}
 	g.add(&iterSetBoundsOp{
-		iterID: g.liveIters.rand(g.rng),
+		iterID: iterID,
 		lower:  lower,
 		upper:  upper,
 	})
+	if upper != nil && g.rng.Float64() < 0.5 {
+		g.add(&iterSeekLTOp{
+			iterID: iterID,
+			key:    upper,
+		})
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterNextOp{
+				iterID: iterID,
+			})
+		}
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterNextOp{
+				iterID: iterID,
+			})
+		}
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterPrevOp{
+				iterID: iterID,
+			})
+		}
+	} else if lower != nil && g.rng.Float64() < 0.5 {
+		g.add(&iterSeekGEOp{
+			iterID: iterID,
+			key:    lower,
+		})
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterPrevOp{
+				iterID: iterID,
+			})
+		}
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterPrevOp{
+				iterID: iterID,
+			})
+		}
+		if g.rng.Float64() < 0.5 {
+			g.add(&iterNextOp{
+				iterID: iterID,
+			})
+		}
+	}
 }
 
 func (g *generator) iterSeekGE() {

@@ -281,7 +281,7 @@ func check(f vfs.File, comparer *Comparer, fp FilterPolicy) error {
 		}
 		i := newIterAdapter(iter)
 
-		{
+		if false {
 			// NB: the semantics of First are that it starts iteration from the
 			// beginning, not respecting the lower bound.
 			n := 0
@@ -293,7 +293,7 @@ func check(f vfs.File, comparer *Comparer, fp FilterPolicy) error {
 			}
 		}
 
-		{
+		if false {
 			// NB: the semantics of Last are that it starts iteration from the end, not
 			// respecting the upper bound.
 			n := 0

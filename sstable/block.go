@@ -269,7 +269,13 @@ func (i *blockIter) init(cmp Compare, block block, globalSeqNum uint64) error {
 	i.fullKey = i.fullKey[:0]
 	i.val = nil
 	i.clearCache()
-	i.readFirstKey()
+	if i.restarts > 0 {
+		if err := i.readFirstKey(); err != nil {
+			return err
+		}
+	} else {
+		i.firstKey = InternalKey{}
+	}
 	return nil
 }
 
@@ -385,7 +391,7 @@ func (i *blockIter) readEntry() {
 	i.nextOffset = int32(uintptr(ptr)-uintptr(i.ptr)) + int32(value)
 }
 
-func (i *blockIter) readFirstKey() {
+func (i *blockIter) readFirstKey() error {
 	ptr := i.ptr
 
 	// This is an ugly performance hack. Reading entries from blocks is one of
@@ -449,10 +455,11 @@ func (i *blockIter) readFirstKey() {
 			i.firstKey.SetSeqNum(i.globalSeqNum)
 		}
 	} else {
-		// TODO: propagate this error?
 		i.firstKey.Trailer = uint64(InternalKeyKindInvalid)
 		i.firstKey.UserKey = nil
+		return base.CorruptionErrorf("pebble/table: invalid firstKey in block")
 	}
+	return nil
 }
 
 func (i *blockIter) decodeInternalKey(key []byte) {

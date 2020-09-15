@@ -401,10 +401,18 @@ func TestBytesIteratedCompressed(t *testing.T) {
 		for _, indexBlockSize := range blockSizes {
 			for _, numEntries := range []uint64{0, 1, 1e5} {
 				r := buildTestTable(t, numEntries, blockSize, indexBlockSize, SnappyCompression)
+				// l, err := r.Layout()
+				// require.NoError(t, err)
+
 				var bytesIterated, prevIterated uint64
 				citer, err := r.NewCompactionIter(&bytesIterated)
 				require.NoError(t, err)
-
+				// stdout := io.Writer(os.Stdout)
+				// fmtRecord := func(key *base.InternalKey, value []byte) {
+				// 	fmt.Fprintf(stdout, "%s#%d,%s:%s", base.DefaultFormatter(key.UserKey),
+				//		key.SeqNum(), key.Kind(), base.DefaultFormatter(value))
+				//}
+				// l.Describe(stdout, true, r, fmtRecord)
 				for key, _ := citer.First(); key != nil; key, _ = citer.Next() {
 					if bytesIterated < prevIterated {
 						t.Fatalf("bytesIterated moved backward: %d < %d", bytesIterated, prevIterated)
