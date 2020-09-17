@@ -55,7 +55,7 @@ var (
 	seed = flag.Uint64("seed", uint64(time.Now().UnixNano()),
 		"a pseudorandom number generator seed")
 	ops    = randvar.NewFlag("uniform:10000-20000")
-	runDir = flag.String("run-dir", "/Users/sumeer/go/src/github.com/cockroachdb/pebble/internal/metamorphic/_meta/200916-153748.871/standard-005/",
+	runDir = flag.String("run-dir", "",
 		"the specific configuration to (re-)run (used for post-mortem debugging)")
 )
 

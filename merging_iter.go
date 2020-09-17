@@ -31,6 +31,7 @@ type mergingIterLevel struct {
 	// below.
 	smallestUserKey, largestUserKey  []byte
 	isLargestUserKeyRangeDelSentinel bool
+	isSyntheticIterBoundsKey         bool
 
 	// tombstone caches the tombstone rangeDelIter is currently pointed at. If
 	// tombstone.Empty() is true, there are no further tombstones within the
@@ -391,7 +392,7 @@ func (m *mergingIter) switchToMinHeap() {
 		// bound.  Instead, we seek it to >= f and Next from there.
 
 		if l.iterKey == nil || (l.iterKey.Kind() == base.InternalKeyKindRangeDelete &&
-			m.heap.cmp(l.iterKey.UserKey, m.lower) < 0) {
+			m.heap.cmp(l.iterKey.UserKey, m.lower) < 0) || l.isSyntheticIterBoundsKey {
 			if m.lower != nil {
 				l.iterKey, l.iterValue = l.iter.SeekGE(m.lower)
 			} else {
@@ -465,7 +466,7 @@ func (m *mergingIter) switchToMaxHeap() {
 		// bound.  Instead, we seek it to < g, and Prev from there.
 
 		if l.iterKey == nil || (l.iterKey.Kind() == base.InternalKeyKindRangeDelete &&
-			m.heap.cmp(l.iterKey.UserKey, m.upper) >= 0) {
+			m.heap.cmp(l.iterKey.UserKey, m.upper) >= 0) || l.isSyntheticIterBoundsKey {
 			if m.upper != nil {
 				l.iterKey, l.iterValue = l.iter.SeekLT(m.upper)
 			} else {
@@ -610,6 +611,9 @@ func (m *mergingIter) isNextEntryDeleted(item *mergingIterItem) bool {
 func (m *mergingIter) findNextEntry() (*InternalKey, []byte) {
 	for m.heap.len() > 0 && m.err == nil {
 		item := &m.heap.items[0]
+		if m.levels[item.index].isSyntheticIterBoundsKey {
+			break
+		}
 		if m.isNextEntryDeleted(item) {
 			continue
 		}
@@ -752,6 +756,9 @@ func (m *mergingIter) isPrevEntryDeleted(item *mergingIterItem) bool {
 func (m *mergingIter) findPrevEntry() (*InternalKey, []byte) {
 	for m.heap.len() > 0 && m.err == nil {
 		item := &m.heap.items[0]
+		if m.levels[item.index].isSyntheticIterBoundsKey {
+			break
+		}
 		if m.isPrevEntryDeleted(item) {
 			continue
 		}
