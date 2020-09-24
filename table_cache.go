@@ -186,10 +186,14 @@ func (c *tableCacheShard) newIters(
 
 	var iter sstable.Iterator
 	var err error
+	var disableSeekOptimization bool
+	if opts != nil {
+		disableSeekOptimization = opts.DisableSeekOptimization
+	}
 	if bytesIterated != nil {
 		iter, err = v.reader.NewCompactionIter(bytesIterated)
 	} else {
-		iter, err = v.reader.NewIter(opts.GetLowerBound(), opts.GetUpperBound())
+		iter, err = v.reader.NewIter2(opts.GetLowerBound(), opts.GetUpperBound(), disableSeekOptimization)
 	}
 	if err != nil {
 		c.unrefValue(v)

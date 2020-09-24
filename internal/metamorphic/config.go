@@ -70,7 +70,7 @@ var defaultConfig = config{
 		iterSeekPrefixGE:  100,
 		iterSetBounds:     500,
 		newBatch:          5,
-		newIndexedBatch:   5,
+		newIndexedBatch:   0,
 		newIter:           10,
 		newSnapshot:       1,
 		readerGet:         1,

@@ -703,6 +703,7 @@ func (d *DB) newIterInternal(
 		dbi.opts = *o
 	}
 	dbi.opts.logger = d.opts.Logger
+	dbi.opts.DisableSeekOptimization = d.opts.Experimental.DisableSeekOptimization
 
 	mlevels := buf.mlevels[:0]
 	if batchIter != nil {

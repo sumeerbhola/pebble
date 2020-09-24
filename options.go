@@ -84,6 +84,8 @@ type IterOptions struct {
 
 	// Internal options.
 	logger Logger
+
+	DisableSeekOptimization bool
 }
 
 // GetLowerBound returns the LowerBound or nil if the receiver is nil.
@@ -323,6 +325,8 @@ type Options struct {
 		// deletion. Disk space cannot be reclaimed until the range deletion
 		// is flushed. No automatic flush occurs if zero.
 		DeleteRangeFlushDelay time.Duration
+
+		DisableSeekOptimization bool
 	}
 
 	// Filters is a map from filter policy name to filter policy. It is used for
@@ -604,6 +608,7 @@ func (o *Options) String() string {
 	fmt.Fprintf(&buf, "  cleaner=%s\n", o.Cleaner)
 	fmt.Fprintf(&buf, "  comparer=%s\n", o.Comparer.Name)
 	fmt.Fprintf(&buf, "  delete_range_flush_delay=%s\n", o.Experimental.DeleteRangeFlushDelay)
+	fmt.Fprintf(&buf, "  disable_seek_optimization=%t\n", o.Experimental.DisableSeekOptimization)
 	fmt.Fprintf(&buf, "  disable_wal=%t\n", o.DisableWAL)
 	fmt.Fprintf(&buf, "  flush_split_bytes=%d\n", o.Experimental.FlushSplitBytes)
 	fmt.Fprintf(&buf, "  l0_compaction_concurrency=%d\n", o.Experimental.L0CompactionConcurrency)
@@ -762,6 +767,8 @@ func (o *Options) Parse(s string, hooks *ParseHooks) error {
 				}
 			case "delete_range_flush_delay":
 				o.Experimental.DeleteRangeFlushDelay, err = time.ParseDuration(value)
+			case "disable_seek_optimization":
+				o.Experimental.DisableSeekOptimization, err = strconv.ParseBool(value)
 			case "disable_wal":
 				o.DisableWAL, err = strconv.ParseBool(value)
 			case "flush_split_bytes":

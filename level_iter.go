@@ -175,6 +175,7 @@ func (l *levelIter) init(
 	l.lower = opts.LowerBound
 	l.upper = opts.UpperBound
 	l.tableOpts.TableFilter = opts.TableFilter
+	l.tableOpts.DisableSeekOptimization = opts.DisableSeekOptimization
 	l.cmp = cmp
 	l.iterFile = nil
 	l.newIters = newIters

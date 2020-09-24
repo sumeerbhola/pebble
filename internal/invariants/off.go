@@ -7,4 +7,4 @@
 package invariants
 
 // Enabled is true if we were built with the "invariants" or "race" build tags.
-const Enabled = false
+const Enabled = true

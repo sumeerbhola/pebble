@@ -199,6 +199,12 @@ func standardOptions() []*testOptions {
 [Level "0"]
   target_file_size=1
 `,
+		8: `
+[Options]
+  disable_seek_optimization=true
+[Level "0"]
+  block_size=1000
+`,
 	}
 
 	opts := make([]*testOptions, len(stdOpts))

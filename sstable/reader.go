@@ -72,7 +72,8 @@ type Iterator interface {
 // key, it first looks in the index for the block that contains that key, and then
 // looks inside that block.
 type singleLevelIterator struct {
-	cmp Compare
+	disableSeekOptimization bool
+	cmp                     Compare
 	// Global lower/upper bound for the iterator.
 	lower []byte
 	upper []byte
@@ -167,7 +168,9 @@ func checkTwoLevelIterator(obj interface{}) {
 // init initializes a singleLevelIterator for reading from the table. It is
 // synonmous with Reader.NewIter, but allows for reusing of the iterator
 // between different Readers.
-func (i *singleLevelIterator) init(r *Reader, lower, upper []byte) error {
+func (i *singleLevelIterator) init(
+	r *Reader, lower, upper []byte, disableSeekOptimization bool,
+) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -180,6 +183,7 @@ func (i *singleLevelIterator) init(r *Reader, lower, upper []byte) error {
 	i.upper = upper
 	i.reader = r
 	i.cmp = r.Compare
+	i.disableSeekOptimization = disableSeekOptimization
 	err = i.index.initHandle(i.cmp, indexH, r.Properties.GlobalSeqNum)
 	if err != nil {
 		// blockIter.Close releases indexH and always returns a nil error
@@ -354,7 +358,8 @@ func (i *singleLevelIterator) SeekGE(key []byte) (*InternalKey, []byte) {
 func (i *singleLevelIterator) seekGEHelper(key []byte, boundsCmp int) (*InternalKey, []byte) {
 	var dontSeekWithinBlock bool
 	SeekGECount++
-	if !i.data.isInvalid() && !i.index.isInvalid() && i.data.Valid() && i.index.Valid() &&
+	if !i.disableSeekOptimization && !i.data.isInvalid() && !i.index.isInvalid() &&
+		i.data.Valid() && i.index.Valid() &&
 		boundsCmp > 0 && i.cmp(key, i.index.Key().UserKey) <= 0 {
 		SeekGEOptCount++
 		// Fast-path: The bounds have moved forward and this SeekGE is
@@ -455,7 +460,8 @@ func (i *singleLevelIterator) SeekLT(key []byte) (*InternalKey, []byte) {
 	i.positionedUsingLatestBounds = true
 
 	var dontSeekWithinBlock bool
-	if !i.data.isInvalid() && !i.index.isInvalid() && i.data.Valid() && i.index.Valid() &&
+	if !i.disableSeekOptimization && !i.data.isInvalid() && !i.index.isInvalid() &&
+		i.data.Valid() && i.index.Valid() &&
 		boundsCmp < 0 && i.cmp(i.data.firstKey.UserKey, key) < 0 {
 		SeekLTOptCount++
 		// Fast-path: The bounds have moved backward, and this SeekLT is
@@ -871,7 +877,9 @@ func (i *twoLevelIterator) loadIndex() bool {
 	return i.err == nil
 }
 
-func (i *twoLevelIterator) init(r *Reader, lower, upper []byte) error {
+func (i *twoLevelIterator) init(
+	r *Reader, lower, upper []byte, disableSeekOptimization bool,
+) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -884,6 +892,7 @@ func (i *twoLevelIterator) init(r *Reader, lower, upper []byte) error {
 	i.upper = upper
 	i.reader = r
 	i.cmp = r.Compare
+	i.disableSeekOptimization = disableSeekOptimization
 	err = i.topLevelIndex.initHandle(i.cmp, topLevelIndexH, r.Properties.GlobalSeqNum)
 	if err != nil {
 		// blockIter.Close releases topLevelIndexH and always returns a nil error
@@ -904,8 +913,8 @@ func (i *twoLevelIterator) SeekGE(key []byte) (*InternalKey, []byte) {
 	i.forwardExhausted, i.backwardExhausted = false, false
 	i.err = nil // clear cached iteration error
 
-	if i.topLevelIndex.isInvalid() || !i.topLevelIndex.Valid() || i.boundsCmp <= 0 ||
-		i.cmp(key, i.topLevelIndex.Key().UserKey) > 0 {
+	if i.disableSeekOptimization && i.topLevelIndex.isInvalid() || !i.topLevelIndex.Valid() ||
+		i.boundsCmp <= 0 || i.cmp(key, i.topLevelIndex.Key().UserKey) > 0 {
 		// Slow-path: need to position the topLevelIndex.
 		if ikey, _ := i.topLevelIndex.SeekGE(key); ikey == nil {
 			i.data.invalidate()
@@ -960,8 +969,8 @@ func (i *twoLevelIterator) SeekPrefixGE(prefix, key []byte) (*InternalKey, []byt
 	// Bloom filter matches.
 	i.forwardExhausted, i.backwardExhausted = false, false
 
-	if i.topLevelIndex.isInvalid() || !i.topLevelIndex.Valid() || i.boundsCmp <= 0 ||
-		i.cmp(key, i.topLevelIndex.Key().UserKey) > 0 {
+	if i.disableSeekOptimization || i.topLevelIndex.isInvalid() || !i.topLevelIndex.Valid() ||
+		i.boundsCmp <= 0 || i.cmp(key, i.topLevelIndex.Key().UserKey) > 0 {
 		// Slow-path: need to position the topLevelIndex.
 		if ikey, _ := i.topLevelIndex.SeekGE(key); ikey == nil {
 			i.data.invalidate()
@@ -1653,12 +1662,16 @@ func (r *Reader) get(key []byte) (value []byte, err error) {
 // NewIter returns an iterator for the contents of the table. If an error
 // occurs, NewIter cleans up after itself and returns a nil iterator.
 func (r *Reader) NewIter(lower, upper []byte) (Iterator, error) {
+	return r.NewIter2(lower, upper, false)
+}
+
+func (r *Reader) NewIter2(lower, upper []byte, disableSeekOptimization bool) (Iterator, error) {
 	// NB: pebble.tableCache wraps the returned iterator with one which performs
 	// reference counting on the Reader, preventing the Reader from being closed
 	// until the final iterator closes.
 	if r.Properties.IndexType == twoLevelIndex {
 		i := twoLevelIterPool.Get().(*twoLevelIterator)
-		err := i.init(r, lower, upper)
+		err := i.init(r, lower, upper, disableSeekOptimization)
 		if err != nil {
 			return nil, err
 		}
@@ -1666,7 +1679,7 @@ func (r *Reader) NewIter(lower, upper []byte) (Iterator, error) {
 	}
 
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
-	err := i.init(r, lower, upper)
+	err := i.init(r, lower, upper, disableSeekOptimization)
 	if err != nil {
 		return nil, err
 	}
@@ -1679,7 +1692,7 @@ func (r *Reader) NewIter(lower, upper []byte) (Iterator, error) {
 func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 	if r.Properties.IndexType == twoLevelIndex {
 		i := twoLevelIterPool.Get().(*twoLevelIterator)
-		err := i.init(r, nil /* lower */, nil /* upper */)
+		err := i.init(r, nil /* lower */, nil /* upper */, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1689,7 +1702,7 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 		}, nil
 	}
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
-	err := i.init(r, nil /* lower */, nil /* upper */)
+	err := i.init(r, nil /* lower */, nil /* upper */, false)
 	if err != nil {
 		return nil, err
 	}
