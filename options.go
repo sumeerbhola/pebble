@@ -201,7 +201,8 @@ func (o *LevelOptions) EnsureDefaults() *LevelOptions {
 		o.BlockRestartInterval = base.DefaultBlockRestartInterval
 	}
 	if o.BlockSize <= 0 {
-		o.BlockSize = base.DefaultBlockSize
+		// o.BlockSize = base.DefaultBlockSize
+		o.BlockSize = 1
 	}
 	if o.BlockSizeThreshold <= 0 {
 		o.BlockSizeThreshold = base.DefaultBlockSizeThreshold

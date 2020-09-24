@@ -51,9 +51,9 @@ var (
 		"write an execution trace to `<run-dir>/file`")
 	keep = flag.Bool("keep", false,
 		"keep the DB directory even on successful runs")
-	seed = flag.Uint64("seed", 0,
+	seed = flag.Uint64("seed", uint64(time.Now().UnixNano()),
 		"a pseudorandom number generator seed")
-	ops    = randvar.NewFlag("uniform:5000-10000")
+	ops    = randvar.NewFlag("uniform:10000-20000")
 	runDir = flag.String("run-dir", "",
 		"the specific configuration to (re-)run (used for post-mortem debugging)")
 )
@@ -62,7 +62,7 @@ func init() {
 	flag.Var(ops, "ops", "")
 }
 
-func testMetaRun(t *testing.T, runDir string, seed uint64) {
+func testMetaRun(t *testing.T, runDir string) {
 	opsPath := filepath.Join(filepath.Dir(filepath.Clean(runDir)), "ops")
 	opsData, err := ioutil.ReadFile(opsPath)
 	require.NoError(t, err)
@@ -120,13 +120,16 @@ func testMetaRun(t *testing.T, runDir string, seed uint64) {
 	require.NoError(t, m.init(h, opts.FS.PathJoin(runDir, "data"), testOpts))
 	for m.step(h) {
 		if err := h.Error(); err != nil {
-			fmt.Fprintf(os.Stderr, "Seed: %d\n", seed)
+			fmt.Fprintf(os.Stderr, "Seed: %d\n", *seed)
 			fmt.Fprintln(os.Stderr, err)
 			m.maybeSaveData()
 			os.Exit(1)
 		}
 	}
-
+	statsPath := filepath.Join(runDir, "stats")
+	statsFile, err := os.Create(statsPath)
+	require.NoError(t, err)
+	defer statsFile.Close()
 	if *keep && !*disk {
 		m.maybeSaveData()
 	}
@@ -160,15 +163,8 @@ func TestMeta(t *testing.T) {
 		// The --run-dir flag is specified either in the child process (see
 		// runOptions() below) or the user specified it manually in order to re-run
 		// a test.
-		testMetaRun(t, *runDir, *seed)
+		testMetaRun(t, *runDir)
 		return
-	}
-
-	// Setting the default seed here rather than in the flag's default value
-	// ensures each run uses a new seed when using the Go test `-count` flag.
-	seed := *seed
-	if seed == 0 {
-		seed = uint64(time.Now().UnixNano())
 	}
 
 	rootName := t.Name()
@@ -183,7 +179,7 @@ func TestMeta(t *testing.T) {
 		}
 	}()
 
-	rng := rand.New(rand.NewSource(seed))
+	rng := rand.New(rand.NewSource(*seed))
 	opCount := ops.Uint64(rng)
 
 	// Generate a new set of random ops, writing them to <dir>/ops. These will be
@@ -233,7 +229,7 @@ func TestMeta(t *testing.T) {
 ===== OPS =====
 %s
 ===== HISTORY =====
-%s`, seed, err, out, optionsStr, formattedOps, readHistory(filepath.Join(runDir, "history")))
+%s`, *seed, err, out, optionsStr, formattedOps, readHistory(filepath.Join(runDir, "history")))
 		}
 	}
 
@@ -249,16 +245,18 @@ func TestMeta(t *testing.T) {
 		})
 	}
 
-	// Perform runs with random options.
-	for i := 0; i < 20; i++ {
-		name := fmt.Sprintf("random-%03d", i)
-		names = append(names, name)
-		opts := randomOptions(rng)
-		options[name] = opts
-		t.Run(name, func(t *testing.T) {
-			runOptions(t, opts)
-		})
-	}
+	/*
+		// Perform runs with random options.
+		for i := 0; i < 20; i++ {
+			name := fmt.Sprintf("random-%03d", i)
+			names = append(names, name)
+			opts := randomOptions(rng)
+			options[name] = opts
+			t.Run(name, func(t *testing.T) {
+				runOptions(t, opts)
+			})
+		}
+	*/
 
 	// Don't bother comparing output if we've already failed.
 	if t.Failed() {
@@ -310,7 +308,7 @@ func TestMeta(t *testing.T) {
 %s
 ===== OPS =====
 %s
-`, seed, metaDir, names[0], names[i], text, names[0], optionsStrA, names[1], optionsStrB, formattedOps)
+`, *seed, metaDir, names[0], names[i], text, names[0], optionsStrA, names[1], optionsStrB, formattedOps)
 			os.Exit(1)
 		}
 	}
