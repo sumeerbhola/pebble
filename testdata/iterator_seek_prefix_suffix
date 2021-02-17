@@ -1,0 +1,112 @@
+define
+a!a.SET.1:aa
+a!b.SET.2:ab
+a!c.SET.3:ac
+a!d.SET.4:ad
+a!e.SET.5:ae
+a!f.SET.6:af
+a!g.SET.7:ag
+a!h.SET.8:ah
+b!a.SET.1:ba
+b!b.SET.2:bb
+b!c.SET.3:bc
+b!d.DEL.2:
+b!d.SET.1:bd
+b!e.DEL.2:
+b!e.SET.1:be
+b!f.SET.1:bf
+b!j.SET.1:bj
+c!a.DEL.3:
+c!a.SET.2:ca2
+c!a.SET.1:ca1
+c!b.SINGLEDEL.2:
+c!b.SET.1:cb
+c!c.SINGLEDEL.2:
+c!d.SINGLEDEL.2:
+c!d.SET.1:cd
+c!e.SINGLEDEL.2:
+c!e.SET.1:ce
+c!f.SINGLEDEL.2:
+c!f.SET.1:ce
+c!g.SINGLEDEL.2:
+c!g.SET.1:ce
+c!h.SINGLEDEL.2:
+c!h.SET.1:ce
+c!i.SINGLEDEL.2:
+c!i.SET.1:ce
+c!j.SINGLEDEL.2:
+c!j.SET.1:ce
+c!k.SET.3:ck3
+c!k.DEL.2:
+c!k.SET.1:ck1
+c!l.SET.2:cl
+d!b.SET.1:db
+----
+
+iter seq=500
+seek-ge a
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+----
+a!a:aa
+a!b:ab
+a!c:ac
+a!d:ad
+a!e:ae
+a!f:af
+a!g:ag
+a!h:ah
+b!a:ba
+b!b:bb
+b!c:bc
+b!f:bf
+b!j:bj
+
+iter seq=500
+seek-ge-prefix-suffix a! b
+next
+seek-ge-prefix-suffix b! c
+next
+seek-ge-prefix-suffix aa! b
+next
+seek-ge-prefix-suffix ab! b
+next
+next
+seek-ge-prefix-suffix A! c
+----
+a!b:ab
+a!c:ac
+b!c:bc
+b!f:bf
+b!b:bb
+b!c:bc
+b!b:bb
+b!c:bc
+b!f:bf
+a!c:ac
+
+iter seq=500
+seek-ge-prefix-suffix a! j
+seek-ge-prefix-suffix b! k
+next
+----
+b!j:bj
+c!k:ck3
+c!l:cl
+
+iter seq=500
+seek-ge-prefix-suffix c! b
+next
+----
+d!b:db
+.

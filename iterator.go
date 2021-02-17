@@ -111,7 +111,11 @@ type readSampling struct {
 	forceReadSampling bool
 }
 
-func (i *Iterator) findNextEntry() bool {
+// findNextEntry looks for the next visible entry. if iterLimit > 0, it will
+// return after iterating iterLimit times for a particular user key, even if
+// it is not yet at the next visible entry. In that case both i.iterKey and
+// i.keyBuf refer to that key.
+func (i *Iterator) findNextEntry(iterLimit int) (valid bool, limitReached bool) {
 	i.valid = false
 	i.pos = iterPosCurForward
 
@@ -120,22 +124,27 @@ func (i *Iterator) findNextEntry() bool {
 		i.err = i.valueCloser.Close()
 		i.valueCloser = nil
 		if i.err != nil {
-			return false
+			return false, false
 		}
 	}
 
+	iterCount := 0
 	for i.iterKey != nil {
 		key := *i.iterKey
 
 		if i.hasPrefix {
 			if n := i.split(key.UserKey); !bytes.Equal(i.prefix, key.UserKey[:n]) {
-				return false
+				return false, false
 			}
 		}
 
 		switch key.Kind() {
 		case InternalKeyKindDelete, InternalKeyKindSingleDelete:
 			i.nextUserKey()
+			iterCount++
+			if iterLimit > 0 && iterCount > iterLimit && i.iterKey != nil {
+				return false, true
+			}
 			continue
 
 		case InternalKeyKindSet:
@@ -143,7 +152,7 @@ func (i *Iterator) findNextEntry() bool {
 			i.key = i.keyBuf
 			i.value = i.iterValue
 			i.valid = true
-			return true
+			return true, false
 
 		case InternalKeyKindMerge:
 			var valueMerger ValueMerger
@@ -154,15 +163,15 @@ func (i *Iterator) findNextEntry() bool {
 			if i.err == nil {
 				i.value, i.valueCloser, i.err = valueMerger.Finish(true /* includesBase */)
 			}
-			return i.err == nil
+			return i.err == nil, false
 
 		default:
 			i.err = base.CorruptionErrorf("pebble: invalid internal key kind: %d", errors.Safe(key.Kind()))
-			return false
+			return false, false
 		}
 	}
 
-	return false
+	return false, false
 }
 
 func (i *Iterator) nextUserKey() {
@@ -435,7 +444,96 @@ func (i *Iterator) SeekGE(key []byte) bool {
 	}
 
 	i.iterKey, i.iterValue = i.iter.SeekGE(key)
-	valid := i.findNextEntry()
+	valid, _ := i.findNextEntry(0)
+	i.maybeSampleRead()
+	return valid
+}
+
+// The number of times to call Next on the InternalIterator, for a particular
+// user key, before giving up and seeking.
+const numStepsBeforeSeek = 4
+
+// SeekGEUsingPrefixAndSuffix ...
+// Specifically looking for suffix for a key >= prefix. Can return a different
+// suffix. But if past the suffix for a given prefix, is allowed to step to next
+// prefix.
+func (i *Iterator) SeekGEUsingPrefixAndSuffix(prefix []byte, suffix []byte) bool {
+	// fmt.Printf("SeekGEUsingPrefixAndSuffix: %s, %s\n", string(prefix), string(suffix))
+	i.err = nil // clear cached iteration error
+	i.hasPrefix = false
+	i.lastPositioningOpIsSeekPrefixGE = false
+	// Hack to use i.prefix. Rename it to tempBuf.
+	keyLen := len(prefix) + len(suffix)
+	if cap(i.prefix) < keyLen {
+		i.prefix = make([]byte, keyLen)
+	} else {
+		i.prefix = i.prefix[:keyLen]
+	}
+	key := i.prefix
+	copy(key, prefix)
+	copy(key[len(prefix):], suffix)
+	if lowerBound := i.opts.GetLowerBound(); lowerBound != nil && i.cmp(key, lowerBound) < 0 {
+		key = lowerBound
+	} else if upperBound := i.opts.GetUpperBound(); upperBound != nil && i.cmp(key, upperBound) > 0 {
+		key = upperBound
+	}
+
+	var valid, limitReached bool
+	for {
+		i.iterKey, i.iterValue = i.iter.SeekGE(key)
+		valid, limitReached = i.findNextEntry(numStepsBeforeSeek)
+		var prefixLen int
+		var seekToImmediateNextPrefix bool
+		if valid {
+			prefixLen = i.split(i.keyBuf)
+			keySuffix := i.keyBuf[prefixLen:]
+			// Hack: we need a suffixCmp method in base.Comparer.
+			cmp := -bytes.Compare(suffix, keySuffix)
+			if cmp == 0 {
+				break
+			}
+			valid = false
+			// seekToImmediateNextPrefix is true iff keySuffix is already past
+			// suffix.
+			seekToImmediateNextPrefix = cmp < 0
+			// TODO(sumeer): consider returning the iteration budget used up
+			// by findNextEntry, and using the remainder here to iterate using
+			// next, before seeking
+		} else if limitReached {
+			prefixLen = i.split(i.keyBuf)
+			keySuffix := i.keyBuf[prefixLen:]
+			// Hack: we need a suffixCmp method in base.Comparer.
+			cmp := -bytes.Compare(suffix, keySuffix)
+			seekToImmediateNextPrefix = cmp < 0
+		} else {
+			break
+		}
+		neededLen := prefixLen + len(suffix)
+		if seekToImmediateNextPrefix {
+			neededLen++
+		}
+		if cap(i.keyBuf) < neededLen {
+			newKeyBuf := make([]byte, neededLen)
+			copy(newKeyBuf, i.keyBuf)
+			i.keyBuf = newKeyBuf
+		} else {
+			i.keyBuf = i.keyBuf[:neededLen]
+		}
+		// fmt.Printf(
+		//	"seek to: %s, stinp: %t, limitReached: %t\n",
+		//	string(i.keyBuf[:prefixLen]), seekToImmediateNextPrefix, limitReached)
+		if seekToImmediateNextPrefix {
+			// Hack: this is incorrect in that appending \0 does not in
+			// general generate a valid prefix. It happens to work for CockroachDB
+			// since the sentinel happens to be \0. But what we really need is
+			// an ImmediateNextPrefix method in base.Comparer and use that if
+			// non-nil.
+			i.keyBuf[prefixLen] = 0
+			prefixLen++
+		}
+		copy(i.keyBuf[prefixLen:], suffix)
+		key = i.keyBuf
+	}
 	i.maybeSampleRead()
 	return valid
 }
@@ -551,7 +649,7 @@ func (i *Iterator) SeekPrefixGE(key []byte) bool {
 	}
 
 	i.iterKey, i.iterValue = i.iter.SeekPrefixGE(i.prefix, key, trySeekUsingNext)
-	valid := i.findNextEntry()
+	valid, _ := i.findNextEntry(0)
 	i.maybeSampleRead()
 	if i.Error() == nil {
 		i.lastPositioningOpIsSeekPrefixGE = true
@@ -598,7 +696,7 @@ func (i *Iterator) First() bool {
 	} else {
 		i.iterKey, i.iterValue = i.iter.First()
 	}
-	valid := i.findNextEntry()
+	valid, _ := i.findNextEntry(0)
 	i.maybeSampleRead()
 	return valid
 }
@@ -665,7 +763,7 @@ func (i *Iterator) Next() bool {
 		i.nextUserKey()
 	case iterPosNext:
 	}
-	valid := i.findNextEntry()
+	valid, _ := i.findNextEntry(0)
 	i.maybeSampleRead()
 	return valid
 }

@@ -42,6 +42,7 @@ type fakeIter struct {
 	index    int
 	valid    bool
 	closeErr error
+	cmp      base.Compare
 }
 
 // fakeIter implements the base.InternalIterator interface.
@@ -74,10 +75,14 @@ func (f *fakeIter) String() string {
 }
 
 func (f *fakeIter) SeekGE(key []byte) (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	for f.index = 0; f.index < len(f.keys); f.index++ {
-		if DefaultComparer.Compare(key, f.key().UserKey) <= 0 {
-			if f.upper != nil && DefaultComparer.Compare(f.upper, f.key().UserKey) <= 0 {
+		if cmp(key, f.key().UserKey) <= 0 {
+			if f.upper != nil && cmp(f.upper, f.key().UserKey) <= 0 {
 				return nil, nil
 			}
 			f.valid = true
@@ -94,10 +99,14 @@ func (f *fakeIter) SeekPrefixGE(
 }
 
 func (f *fakeIter) SeekLT(key []byte) (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	for f.index = len(f.keys) - 1; f.index >= 0; f.index-- {
-		if DefaultComparer.Compare(key, f.key().UserKey) > 0 {
-			if f.lower != nil && DefaultComparer.Compare(f.lower, f.key().UserKey) > 0 {
+		if cmp(key, f.key().UserKey) > 0 {
+			if f.lower != nil && cmp(f.lower, f.key().UserKey) > 0 {
 				return nil, nil
 			}
 			f.valid = true
@@ -108,12 +117,16 @@ func (f *fakeIter) SeekLT(key []byte) (*InternalKey, []byte) {
 }
 
 func (f *fakeIter) First() (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	f.index = -1
 	if key, _ := f.Next(); key == nil {
 		return nil, nil
 	}
-	if f.upper != nil && DefaultComparer.Compare(f.upper, f.key().UserKey) <= 0 {
+	if f.upper != nil && cmp(f.upper, f.key().UserKey) <= 0 {
 		return nil, nil
 	}
 	f.valid = true
@@ -121,12 +134,16 @@ func (f *fakeIter) First() (*InternalKey, []byte) {
 }
 
 func (f *fakeIter) Last() (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	f.index = len(f.keys)
 	if key, _ := f.Prev(); key == nil {
 		return nil, nil
 	}
-	if f.lower != nil && DefaultComparer.Compare(f.lower, f.key().UserKey) > 0 {
+	if f.lower != nil && cmp(f.lower, f.key().UserKey) > 0 {
 		return nil, nil
 	}
 	f.valid = true
@@ -134,6 +151,10 @@ func (f *fakeIter) Last() (*InternalKey, []byte) {
 }
 
 func (f *fakeIter) Next() (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	if f.index == len(f.keys) {
 		return nil, nil
@@ -142,7 +163,7 @@ func (f *fakeIter) Next() (*InternalKey, []byte) {
 	if f.index == len(f.keys) {
 		return nil, nil
 	}
-	if f.upper != nil && DefaultComparer.Compare(f.upper, f.key().UserKey) <= 0 {
+	if f.upper != nil && cmp(f.upper, f.key().UserKey) <= 0 {
 		return nil, nil
 	}
 	f.valid = true
@@ -150,6 +171,10 @@ func (f *fakeIter) Next() (*InternalKey, []byte) {
 }
 
 func (f *fakeIter) Prev() (*InternalKey, []byte) {
+	cmp := f.cmp
+	if cmp == nil {
+		cmp = DefaultComparer.Compare
+	}
 	f.valid = false
 	if f.index < 0 {
 		return nil, nil
@@ -158,7 +183,7 @@ func (f *fakeIter) Prev() (*InternalKey, []byte) {
 	if f.index < 0 {
 		return nil, nil
 	}
-	if f.lower != nil && DefaultComparer.Compare(f.lower, f.key().UserKey) > 0 {
+	if f.lower != nil && cmp(f.lower, f.key().UserKey) > 0 {
 		return nil, nil
 	}
 	f.valid = true
@@ -784,6 +809,87 @@ func TestIteratorNextPrev(t *testing.T) {
 			return fmt.Sprintf("unknown command: %s", td.Cmd)
 		}
 	})
+}
+
+func TestIterator_SeekGEUsingPrefixAndSuffix(t *testing.T) {
+	var keys []InternalKey
+	var vals [][]byte
+
+	newIter := func(seqNum uint64, opts IterOptions) *Iterator {
+		cmp := func(a, b []byte) int {
+			if c := bytes.Compare(a[:len(a)-1], b[:len(b)-1]); c != 0 {
+				return c
+			}
+			return bytes.Compare(a[len(a)-1:], b[len(b)-1:])
+		}
+		equal := DefaultComparer.Equal
+		split := func(a []byte) int { return len(a) - 1 }
+		// NB: Use a mergingIter to filter entries newer than seqNum.
+		iter := newMergingIter(nil /* logger */, cmp, &fakeIter{
+			lower: opts.GetLowerBound(),
+			upper: opts.GetUpperBound(),
+			keys:  keys,
+			vals:  vals,
+			cmp:   cmp,
+		})
+		iter.snapshot = seqNum
+		iter.elideRangeTombstones = true
+		// NB: This Iterator cannot be cloned since it is not constructed
+		// with a readState. It suffices for this test.
+		return &Iterator{
+			opts:  opts,
+			cmp:   cmp,
+			equal: equal,
+			split: split,
+			merge: DefaultMerger.Merge,
+			iter:  newInvalidatingIter(iter),
+		}
+	}
+
+	datadriven.RunTest(t, "testdata/iterator_seek_prefix_suffix",
+		func(d *datadriven.TestData) string {
+			switch d.Cmd {
+			case "define":
+				keys = keys[:0]
+				vals = vals[:0]
+				for _, key := range strings.Split(d.Input, "\n") {
+					j := strings.Index(key, ":")
+					keys = append(keys, base.ParseInternalKey(key[:j]))
+					vals = append(vals, []byte(key[j+1:]))
+				}
+				return ""
+
+			case "iter":
+				var seqNum int
+				var opts IterOptions
+
+				for _, arg := range d.CmdArgs {
+					if len(arg.Vals) != 1 {
+						return fmt.Sprintf("%s: %s=<value>", d.Cmd, arg.Key)
+					}
+					switch arg.Key {
+					case "seq":
+						var err error
+						seqNum, err = strconv.Atoi(arg.Vals[0])
+						if err != nil {
+							return err.Error()
+						}
+					case "lower":
+						opts.LowerBound = []byte(arg.Vals[0])
+					case "upper":
+						opts.UpperBound = []byte(arg.Vals[0])
+					default:
+						return fmt.Sprintf("%s: unknown arg: %s", d.Cmd, arg.Key)
+					}
+				}
+
+				iter := newIter(uint64(seqNum), opts)
+				return runIterCmd(d, iter, true)
+
+			default:
+				return fmt.Sprintf("unknown command: %s", d.Cmd)
+			}
+		})
 }
 
 func BenchmarkIteratorSeekGE(b *testing.B) {

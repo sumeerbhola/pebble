@@ -85,6 +85,12 @@ func runIterCmd(d *datadriven.TestData, iter *Iterator, closeIter bool) string {
 				return "seek-prefix-ge <key>\n"
 			}
 			valid = iter.SeekPrefixGE([]byte(strings.TrimSpace(parts[1])))
+		case "seek-ge-prefix-suffix":
+			if len(parts) != 3 {
+				return "seek-ge-prefix-suffix <prefix> <suffix>\n"
+			}
+			valid = iter.SeekGEUsingPrefixAndSuffix(
+				[]byte(strings.TrimSpace(parts[1])), []byte(strings.TrimSpace(parts[2])))
 		case "seek-lt":
 			if len(parts) != 2 {
 				return "seek-lt <key>\n"
