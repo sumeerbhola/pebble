@@ -94,6 +94,31 @@ func (s objIDSet) sorted() []objID {
 	return keys
 }
 
+type singleSetKeysForBatch struct {
+	keys *[][]byte
+}
+
+func makeSingleSetKeysForBatch() singleSetKeysForBatch {
+	var keys [][]byte
+	return singleSetKeysForBatch{keys: &keys}
+}
+
+func (s singleSetKeysForBatch) addKey(key []byte) {
+	*s.keys = append(*s.keys, key)
+}
+
+func (s singleSetKeysForBatch) transferTo(to singleSetKeysForBatch) {
+	*to.keys = append(*to.keys, *s.keys...)
+}
+
+func (s singleSetKeysForBatch) removeKey(index int) []byte {
+	key := (*s.keys)[index]
+	length := len(*s.keys)
+	(*s.keys)[length-1], (*s.keys)[index] = (*s.keys)[index], (*s.keys)[length-1]
+	*s.keys = (*s.keys)[:length-1]
+	return key
+}
+
 // firstError returns the first non-nil error of err0 and err1, or nil if both
 // are nil.
 func firstError(err0, err1 error) error {
