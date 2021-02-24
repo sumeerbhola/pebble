@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/private"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
+	"golang.org/x/exp/rand"
 )
 
 // op defines the interface for a single operation, such as creating a batch,
@@ -24,6 +25,8 @@ type op interface {
 	run(t *test, h *history)
 	String() string
 }
+
+type keyType []byte
 
 // initOp performs test initialization
 type initOp struct {
@@ -99,8 +102,8 @@ func (o *closeOp) String() string {
 
 // compactOp models a DB.Compact operation.
 type compactOp struct {
-	start []byte
-	end   []byte
+	start keyType
+	end   keyType
 }
 
 func (o *compactOp) run(t *test, h *history) {
@@ -111,13 +114,14 @@ func (o *compactOp) run(t *test, h *history) {
 }
 
 func (o *compactOp) String() string {
-	return fmt.Sprintf("db.Compact(%q, %q)", o.start, o.end)
+	// return fmt.Sprintf("db.Compact(%q, %q)", o.start, o.end)
+	return fmt.Sprintf("db.Compact(%s, %s)", prettyPrintKey(o.start), prettyPrintKey(o.end))
 }
 
 // deleteOp models a Write.Delete operation.
 type deleteOp struct {
 	writerID objID
-	key      []byte
+	key      keyType
 }
 
 func (o *deleteOp) run(t *test, h *history) {
@@ -127,30 +131,36 @@ func (o *deleteOp) run(t *test, h *history) {
 }
 
 func (o *deleteOp) String() string {
-	return fmt.Sprintf("%s.Delete(%q)", o.writerID, o.key)
+	return fmt.Sprintf("%s.Delete(%s)", o.writerID, prettyPrintKey(o.key))
 }
 
 // singleDeleteOp models a Write.SingleDelete operation.
 type singleDeleteOp struct {
 	writerID objID
-	key      []byte
+	key      keyType
 }
 
 func (o *singleDeleteOp) run(t *test, h *history) {
 	w := t.getWriter(o.writerID)
-	err := w.SingleDelete(o.key, t.writeOpts)
+	var err error
+	// Hack.
+	if rand.Intn(2) == 0 {
+		err = w.SingleDelete(o.key, t.writeOpts)
+	} else {
+		err = w.Delete(o.key, t.writeOpts)
+	}
 	h.Recordf("%s // %v", o, err)
 }
 
 func (o *singleDeleteOp) String() string {
-	return fmt.Sprintf("%s.SingleDelete(%q)", o.writerID, o.key)
+	return fmt.Sprintf("%s.SingleDelete(%s)", o.writerID, prettyPrintKey(o.key))
 }
 
 // deleteRangeOp models a Write.DeleteRange operation.
 type deleteRangeOp struct {
 	writerID objID
-	start    []byte
-	end      []byte
+	start    keyType
+	end      keyType
 }
 
 func (o *deleteRangeOp) run(t *test, h *history) {
@@ -160,7 +170,8 @@ func (o *deleteRangeOp) run(t *test, h *history) {
 }
 
 func (o *deleteRangeOp) String() string {
-	return fmt.Sprintf("%s.DeleteRange(%q, %q)", o.writerID, o.start, o.end)
+	return fmt.Sprintf("%s.DeleteRange(%s, %s)", o.writerID,
+		prettyPrintKey(o.start), prettyPrintKey(o.end))
 }
 
 // flushOp models a DB.Flush operation.
@@ -179,7 +190,7 @@ func (o *flushOp) String() string {
 // mergeOp models a Write.Merge operation.
 type mergeOp struct {
 	writerID objID
-	key      []byte
+	key      keyType
 	value    []byte
 }
 
@@ -190,13 +201,13 @@ func (o *mergeOp) run(t *test, h *history) {
 }
 
 func (o *mergeOp) String() string {
-	return fmt.Sprintf("%s.Merge(%q, %q)", o.writerID, o.key, o.value)
+	return fmt.Sprintf("%s.Merge(%s, %q)", o.writerID, prettyPrintKey(o.key), o.value)
 }
 
 // setOp models a Write.Set operation.
 type setOp struct {
 	writerID objID
-	key      []byte
+	key      keyType
 	value    []byte
 }
 
@@ -207,7 +218,7 @@ func (o *setOp) run(t *test, h *history) {
 }
 
 func (o *setOp) String() string {
-	return fmt.Sprintf("%s.Set(%q, %q)", o.writerID, o.key, o.value)
+	return fmt.Sprintf("%s.Set(%s, %q)", o.writerID, prettyPrintKey(o.key), o.value)
 }
 
 // newBatchOp models a Write.NewBatch operation.
@@ -472,7 +483,7 @@ func (o *ingestOp) String() string {
 // getOp models a Reader.Get operation.
 type getOp struct {
 	readerID objID
-	key      []byte
+	key      keyType
 }
 
 func (o *getOp) run(t *test, h *history) {
@@ -490,15 +501,15 @@ func (o *getOp) run(t *test, h *history) {
 }
 
 func (o *getOp) String() string {
-	return fmt.Sprintf("%s.Get(%q)", o.readerID, o.key)
+	return fmt.Sprintf("%s.Get(%s)", o.readerID, prettyPrintKey(o.key))
 }
 
 // newIterOp models a Reader.NewIter operation.
 type newIterOp struct {
 	readerID objID
 	iterID   objID
-	lower    []byte
-	upper    []byte
+	lower    keyType
+	upper    keyType
 }
 
 func (o *newIterOp) run(t *test, h *history) {
@@ -520,8 +531,8 @@ func (o *newIterOp) run(t *test, h *history) {
 }
 
 func (o *newIterOp) String() string {
-	return fmt.Sprintf("%s = %s.NewIter(%q, %q)",
-		o.iterID, o.readerID, o.lower, o.upper)
+	return fmt.Sprintf("%s = %s.NewIter(%s, %s)",
+		o.iterID, o.readerID, prettyPrintKey(o.lower), prettyPrintKey(o.upper))
 }
 
 // newIterUsingCloneOp models a Iterator.Clone operation.
@@ -547,8 +558,8 @@ func (o *newIterUsingCloneOp) String() string {
 // iterSetBoundsOp models an Iterator.SetBounds operation.
 type iterSetBoundsOp struct {
 	iterID objID
-	lower  []byte
-	upper  []byte
+	lower  keyType
+	upper  keyType
 }
 
 func (o *iterSetBoundsOp) run(t *test, h *history) {
@@ -558,67 +569,67 @@ func (o *iterSetBoundsOp) run(t *test, h *history) {
 }
 
 func (o *iterSetBoundsOp) String() string {
-	return fmt.Sprintf("%s.SetBounds(%q, %q)", o.iterID, o.lower, o.upper)
+	return fmt.Sprintf("%s.SetBounds(%s, %s)", o.iterID, prettyPrintKey(o.lower), prettyPrintKey(o.upper))
 }
 
 // iterSeekGEOp models an Iterator.SeekGE operation.
 type iterSeekGEOp struct {
 	iterID objID
-	key    []byte
+	key    keyType
 }
 
 func (o *iterSeekGEOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.SeekGE(o.key)
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
 }
 
 func (o *iterSeekGEOp) String() string {
-	return fmt.Sprintf("%s.SeekGE(%q)", o.iterID, o.key)
+	return fmt.Sprintf("%s.SeekGE(%s)", o.iterID, prettyPrintKey(o.key))
 }
 
 // iterSeekPrefixGEOp models an Iterator.SeekPrefixGE operation.
 type iterSeekPrefixGEOp struct {
 	iterID objID
-	key    []byte
+	key    keyType
 }
 
 func (o *iterSeekPrefixGEOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.SeekPrefixGE(o.key)
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
 }
 
 func (o *iterSeekPrefixGEOp) String() string {
-	return fmt.Sprintf("%s.SeekPrefixGE(%q)", o.iterID, o.key)
+	return fmt.Sprintf("%s.SeekPrefixGE(%s)", o.iterID, prettyPrintKey(o.key))
 }
 
 // iterSeekLTOp models an Iterator.SeekLT operation.
 type iterSeekLTOp struct {
 	iterID objID
-	key    []byte
+	key    keyType
 }
 
 func (o *iterSeekLTOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.SeekLT(o.key)
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
 }
 
 func (o *iterSeekLTOp) String() string {
-	return fmt.Sprintf("%s.SeekLT(%q)", o.iterID, o.key)
+	return fmt.Sprintf("%s.SeekLT(%s)", o.iterID, prettyPrintKey(o.key))
 }
 
 // iterFirstOp models an Iterator.First operation.
@@ -630,7 +641,7 @@ func (o *iterFirstOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.First()
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
@@ -649,7 +660,7 @@ func (o *iterLastOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.Last()
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
@@ -668,7 +679,7 @@ func (o *iterNextOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.Next()
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}
@@ -687,7 +698,7 @@ func (o *iterPrevOp) run(t *test, h *history) {
 	i := t.getIter(o.iterID)
 	valid := i.Prev()
 	if valid {
-		h.Recordf("%s // [%t,%q,%q] %v", o, valid, i.Key(), i.Value(), i.Error())
+		h.Recordf("%s // [%t,%s,%q] %v", o, valid, prettyPrintKey(i.Key()), i.Value(), i.Error())
 	} else {
 		h.Recordf("%s // [%t] %v", o, valid, i.Error())
 	}

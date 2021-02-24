@@ -138,13 +138,22 @@ func (g *generator) add(op op) {
 	g.ops = append(g.ops, op)
 }
 
+const maxKeyLen = 12
+
+func (g *generator) generateNewKey() []byte {
+	// return g.randValue(4, maxKeyLen)
+	k := g.randValue(4, maxKeyLen)
+	walltime := g.rng.Uint64n(10)
+	return mvccEncode(k, walltime, 0)
+}
+
 // TODO(peter): make the size and distribution of keys configurable. See
 // keyDist and keySizeDist in config.go.
 func (g *generator) randKey(newKey float64) []byte {
 	if n := len(g.keys); n > 0 && g.rng.Float64() > newKey {
 		return g.keys[g.rng.Intn(n)]
 	}
-	key := g.randValue(4, 12)
+	key := g.generateNewKey()
 	g.keys = append(g.keys, key)
 	return key
 }
@@ -153,11 +162,11 @@ func (g *generator) randKeyForSet(newKey float64, singleSetKey float64, writerID
 	if n := len(g.keys); n > 0 && g.rng.Float64() > newKey {
 		return g.keys[g.rng.Intn(n)]
 	}
-	key := g.randValue(4, 12)
+	key := g.generateNewKey()
 	if g.rng.Float64() < singleSetKey {
 		for {
 			if _, ok := g.generatedSingleSetKeys[string(key)]; ok {
-				key = g.randValue(4, 12)
+				key = g.generateNewKey()
 				continue
 			}
 			g.generatedSingleSetKeys[string(key)] = struct{}{}
@@ -303,7 +312,7 @@ func (g *generator) dbCompact() {
 	// Generate new key(s) with a 1% probability.
 	start := g.randKey(0.01)
 	end := g.randKey(0.01)
-	if bytes.Compare(start, end) > 0 {
+	if mvccCompare(start, end) > 0 {
 		start, end = end, start
 	}
 	g.add(&compactOp{
@@ -360,7 +369,7 @@ func (g *generator) newIter() {
 		// Generate a new key with a .1% probability.
 		upper = g.randKey(0.001)
 	}
-	if bytes.Compare(lower, upper) > 0 {
+	if mvccCompare(lower, upper) > 0 {
 		lower, upper = upper, lower
 	}
 
@@ -446,10 +455,10 @@ func (g *generator) iterSetBounds() {
 			// Generate a new key with a .1% probability.
 			upper = g.randKey(0.001)
 		}
-		if bytes.Compare(lower, upper) > 0 {
+		if mvccCompare(lower, upper) > 0 {
 			lower, upper = upper, lower
 		}
-		if ensureLowerGE && bytes.Compare(iterLastBounds.upper, lower) > 0 {
+		if ensureLowerGE && mvccCompare(iterLastBounds.upper, lower) > 0 {
 			if attempts < 25 {
 				continue
 			}
@@ -457,7 +466,7 @@ func (g *generator) iterSetBounds() {
 			upper = lower
 			break
 		}
-		if ensureUpperLE && bytes.Compare(upper, iterLastBounds.lower) > 0 {
+		if ensureUpperLE && mvccCompare(upper, iterLastBounds.lower) > 0 {
 			if attempts < 25 {
 				continue
 			}
@@ -545,7 +554,7 @@ func (g *generator) iterSeekGE() {
 	if g.rng.Intn(4) != 0 {
 		key2 = g.randKey(0.001)
 	}
-	if bytes.Compare(key1, key2) > 0 {
+	if mvccCompare(key1, key2) > 0 {
 		key1, key2 = key2, key1
 	}
 	g.add(&iterSeekGEOp{
@@ -588,7 +597,7 @@ func (g *generator) iterSeekLT() {
 	if g.rng.Intn(4) != 0 {
 		key2 = g.randKey(0.001)
 	}
-	if bytes.Compare(key1, key2) < 0 {
+	if mvccCompare(key1, key2) < 0 {
 		key1, key2 = key2, key1
 	}
 	g.add(&iterSeekLTOp{
@@ -744,7 +753,7 @@ func (g *generator) writerDeleteRange() {
 
 	start := g.randKey(0.001)
 	end := g.randKey(0.001)
-	if bytes.Compare(start, end) > 0 {
+	if mvccCompare(start, end) > 0 {
 		start, end = end, start
 	}
 
@@ -819,17 +828,23 @@ func (g *generator) writerSingleDelete() {
 	if key == nil {
 		return
 	}
-	if g.rng.Intn(2) == 0 {
-		g.add(&singleDeleteOp{
-			writerID: writerID,
-			key:      key,
-		})
-	} else {
-		g.add(&deleteOp{
-			writerID: writerID,
-			key:      key,
-		})
-	}
+	g.add(&singleDeleteOp{
+		writerID: writerID,
+		key:      key,
+	})
+	/*
+		if g.rng.Intn(2) == 0 {
+			g.add(&singleDeleteOp{
+				writerID: writerID,
+				key:      key,
+			})
+		} else {
+			g.add(&deleteOp{
+				writerID: writerID,
+				key:      key,
+			})
+		}
+	*/
 	g.tryRepositionBatchIters(writerID)
 }
 

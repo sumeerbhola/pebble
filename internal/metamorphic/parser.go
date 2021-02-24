@@ -157,16 +157,20 @@ func (p *parser) parse() (_ []op, err error) {
 		if r := recover(); r != nil {
 			var ok bool
 			if err, ok = r.(error); ok {
+				fmt.Printf("err: %s\n", err.Error())
 				return
 			}
 			err = errors.Errorf("%v", r)
+			fmt.Printf("err: %s\n", err.Error())
 		}
 	}()
 
 	var ops []op
 	for {
+		fmt.Printf("parsing op: %d\n", len(ops)+1)
 		op := p.parseOp()
 		if op == nil {
+			fmt.Printf("done parsing ops: %d\n", len(ops)+1)
 			return ops, nil
 		}
 		ops = append(ops, op)
@@ -249,6 +253,18 @@ func (p *parser) parseArgs(op op, methodName string, args []interface{}) {
 				panic(err)
 			}
 			*t = uint32(val)
+
+		case *keyType:
+			_, lit := p.scanToken(token.STRING)
+			s, err := strconv.Unquote(lit)
+			if err != nil {
+				panic(err)
+			}
+			if len(s) == 0 {
+				*t = nil
+			} else {
+				*t = prettyParseKey(s)
+			}
 
 		case *[]byte:
 			_, lit := p.scanToken(token.STRING)
