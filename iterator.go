@@ -6,6 +6,7 @@ package pebble
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync/atomic"
 	"unsafe"
@@ -17,18 +18,18 @@ import (
 	"github.com/cockroachdb/pebble/internal/manifest"
 )
 
-// iterPos describes the state of the internal iterator, in terms of whether it is
+// IterPos describes the state of the internal iterator, in terms of whether it is
 // at the position returned to the user (cur), one ahead of the position returned
 // (next for forward iteration and prev for reverse iteration). The cur position
 // is split into two states, for forward and reverse iteration, since we need to
 // differentiate for switching directions.
-type iterPos int8
+type IterPos int8
 
 const (
-	iterPosCurForward iterPos = 0
-	iterPosNext       iterPos = 1
-	iterPosPrev       iterPos = -1
-	iterPosCurReverse iterPos = -2
+	IterPosCurForward IterPos = 0
+	IterPosNext       IterPos = 1
+	IterPosPrev       IterPos = -1
+	IterPosCurReverse IterPos = -2
 )
 
 // Approximate gap in bytes between samples of data read during iteration.
@@ -81,7 +82,7 @@ type Iterator struct {
 	iterKey             *InternalKey
 	iterValue           []byte
 	alloc               *iterAlloc
-	prefixOrFullSeekKey []byte
+	PrefixOrFullSeekKey []byte
 	readSampling        readSampling
 
 	// Following fields are only used in Clone.
@@ -94,12 +95,16 @@ type Iterator struct {
 	// sizeof this struct by 24 bytes.
 
 	valid bool
-	pos   iterPos
-	// Relates to the prefixOrFullSeekKey field above.
+	Pos   IterPos
+	// Relates to the PrefixOrFullSeekKey field above.
 	hasPrefix bool
 	// Used for deriving the value of SeekPrefixGE(..., trySeekUsingNext),
 	// and SeekGE/SeekLT optimizations
-	lastPositioningOp lastPositioningOpKind
+	lastPositioningOp      lastPositioningOpKind
+	KeyUsedWithSeekNoopOpt []byte
+	SeekGELB               []byte
+	SeekGEUB               []byte
+	DisableSeekNoopOpt     bool
 }
 
 type lastPositioningOpKind int8
@@ -123,7 +128,7 @@ type readSampling struct {
 
 func (i *Iterator) findNextEntry() bool {
 	i.valid = false
-	i.pos = iterPosCurForward
+	i.Pos = IterPosCurForward
 
 	// Close the closer for the current value if one was open.
 	if i.valueCloser != nil {
@@ -138,7 +143,7 @@ func (i *Iterator) findNextEntry() bool {
 		key := *i.iterKey
 
 		if i.hasPrefix {
-			if n := i.split(key.UserKey); !bytes.Equal(i.prefixOrFullSeekKey, key.UserKey[:n]) {
+			if n := i.split(key.UserKey); !bytes.Equal(i.PrefixOrFullSeekKey, key.UserKey[:n]) {
 				return false
 			}
 		}
@@ -228,9 +233,9 @@ func (i *Iterator) sampleRead() {
 				l := manifest.LevelToInt(li.level)
 				if file := li.files.Current(); file != nil {
 					var containsKey bool
-					if i.pos == iterPosNext || i.pos == iterPosCurForward {
+					if i.Pos == IterPosNext || i.Pos == IterPosCurForward {
 						containsKey = i.cmp(file.Smallest.UserKey, i.key) <= 0
-					} else if i.pos == iterPosPrev || i.pos == iterPosCurReverse {
+					} else if i.Pos == IterPosPrev || i.Pos == IterPosCurReverse {
 						containsKey = i.cmp(file.Largest.UserKey, i.key) >= 0
 					}
 					// Do nothing if the current key is not contained in file's
@@ -272,7 +277,7 @@ func (i *Iterator) sampleRead() {
 
 func (i *Iterator) findPrevEntry() bool {
 	i.valid = false
-	i.pos = iterPosCurReverse
+	i.Pos = IterPosCurReverse
 
 	// Close the closer for the current value if one was open.
 	if i.valueCloser != nil {
@@ -290,7 +295,7 @@ func (i *Iterator) findPrevEntry() bool {
 		if i.valid {
 			if !i.equal(key.UserKey, i.key) {
 				// We've iterated to the previous user key.
-				i.pos = iterPosPrev
+				i.Pos = IterPosPrev
 				if valueMerger != nil {
 					i.value, i.valueCloser, i.err = valueMerger.Finish(true /* includesBase */)
 				}
@@ -354,7 +359,7 @@ func (i *Iterator) findPrevEntry() bool {
 
 	// i.iterKey == nil, so broke out of the preceding loop.
 	if i.valid {
-		i.pos = iterPosPrev
+		i.Pos = IterPosPrev
 		if valueMerger != nil {
 			i.value, i.valueCloser, i.err = valueMerger.Finish(true /* includesBase */)
 		}
@@ -395,13 +400,13 @@ func (i *Iterator) mergeNext(key InternalKey, valueMerger ValueMerger) {
 	for {
 		i.iterKey, i.iterValue = i.iter.Next()
 		if i.iterKey == nil {
-			i.pos = iterPosNext
+			i.Pos = IterPosNext
 			return
 		}
 		key = *i.iterKey
 		if !i.equal(i.key, key.UserKey) {
 			// We've advanced to the next key.
-			i.pos = iterPosNext
+			i.Pos = IterPosNext
 			return
 		}
 		switch key.Kind() {
@@ -442,6 +447,7 @@ func (i *Iterator) SeekGE(key []byte) bool {
 	i.lastPositioningOp = unknownLastPositionOp
 	i.err = nil // clear cached iteration error
 	i.hasPrefix = false
+	i.KeyUsedWithSeekNoopOpt = nil
 	if lowerBound := i.opts.GetLowerBound(); lowerBound != nil && i.cmp(key, lowerBound) < 0 {
 		key = lowerBound
 	} else if upperBound := i.opts.GetUpperBound(); upperBound != nil && i.cmp(key, upperBound) > 0 {
@@ -451,14 +457,19 @@ func (i *Iterator) SeekGE(key []byte) bool {
 	// an iterator over a batch is iterating over mutable data, that may have
 	// changed since the last seek.
 	if lastPositioningOp == seekGELastPositioningOp && i.batch == nil {
-		cmp := i.cmp(i.prefixOrFullSeekKey, key)
+		cmp := i.cmp(i.PrefixOrFullSeekKey, key)
 		// If this seek is to the same or later key, and the iterator is
 		// already positioned there, this is a noop. This can be helpful for
 		// sparse key spaces that have many deleted keys, where one can avoid
 		// the overhead of iterating past them again and again.
 		if cmp <= 0 && (!i.valid || i.cmp(key, i.key) <= 0) {
-			if !invariants.Enabled || !disableSeekOpt(key, uintptr(unsafe.Pointer(i))) {
+			if !i.valid && i.Pos != IterPosCurForward {
+				panic(fmt.Sprintf("unexpected pos: %d", i.Pos))
+			}
+			if !i.DisableSeekNoopOpt &&
+				(!invariants.Enabled || !disableSeekOpt(key, uintptr(unsafe.Pointer(i)))) {
 				i.lastPositioningOp = seekGELastPositioningOp
+				i.KeyUsedWithSeekNoopOpt = append(i.KeyUsedWithSeekNoopOpt[:0], key...)
 				return i.valid
 			}
 		}
@@ -468,7 +479,19 @@ func (i *Iterator) SeekGE(key []byte) bool {
 	i.maybeSampleRead()
 	if i.Error() == nil && i.batch == nil {
 		// Prepare state for a future noop optimization.
-		i.prefixOrFullSeekKey = append(i.prefixOrFullSeekKey[:0], key...)
+		i.PrefixOrFullSeekKey = append(i.PrefixOrFullSeekKey[:0], key...)
+		lb := i.opts.GetLowerBound()
+		if lb != nil {
+			i.SeekGELB = append(i.SeekGELB[:0], lb...)
+		} else {
+			i.SeekGELB = nil
+		}
+		ub := i.opts.GetUpperBound()
+		if ub != nil {
+			i.SeekGEUB = append(i.SeekGEUB[:0], ub...)
+		} else {
+			i.SeekGEUB = nil
+		}
 		i.lastPositioningOp = seekGELastPositioningOp
 	}
 	return valid
@@ -545,7 +568,7 @@ func (i *Iterator) SeekPrefixGE(key []byte) bool {
 		// become de-optimizations (if one usually has to do all the next
 		// calls and then the seek). This SeekPrefixGE optimization
 		// specifically benefits CockroachDB.
-		cmp := i.cmp(i.prefixOrFullSeekKey, keyPrefix)
+		cmp := i.cmp(i.PrefixOrFullSeekKey, keyPrefix)
 		// cmp == 0 is not safe to optimize since
 		// - i.pos could be at iterPosNext, due to a merge.
 		// - Even if i.pos were at iterPosCurForward, we could have a DELETE,
@@ -562,29 +585,29 @@ func (i *Iterator) SeekPrefixGE(key []byte) bool {
 	}
 	// Make a copy of the prefix so that modifications to the key after
 	// SeekPrefixGE returns does not affect the stored prefix.
-	if cap(i.prefixOrFullSeekKey) < prefixLen {
-		i.prefixOrFullSeekKey = make([]byte, prefixLen)
+	if cap(i.PrefixOrFullSeekKey) < prefixLen {
+		i.PrefixOrFullSeekKey = make([]byte, prefixLen)
 	} else {
-		i.prefixOrFullSeekKey = i.prefixOrFullSeekKey[:prefixLen]
+		i.PrefixOrFullSeekKey = i.PrefixOrFullSeekKey[:prefixLen]
 	}
 	i.hasPrefix = true
-	copy(i.prefixOrFullSeekKey, keyPrefix)
+	copy(i.PrefixOrFullSeekKey, keyPrefix)
 
 	if lowerBound := i.opts.GetLowerBound(); lowerBound != nil && i.cmp(key, lowerBound) < 0 {
-		if n := i.split(lowerBound); !bytes.Equal(i.prefixOrFullSeekKey, lowerBound[:n]) {
+		if n := i.split(lowerBound); !bytes.Equal(i.PrefixOrFullSeekKey, lowerBound[:n]) {
 			i.err = errors.New("pebble: SeekPrefixGE supplied with key outside of lower bound")
 			return false
 		}
 		key = lowerBound
 	} else if upperBound := i.opts.GetUpperBound(); upperBound != nil && i.cmp(key, upperBound) > 0 {
-		if n := i.split(upperBound); !bytes.Equal(i.prefixOrFullSeekKey, upperBound[:n]) {
+		if n := i.split(upperBound); !bytes.Equal(i.PrefixOrFullSeekKey, upperBound[:n]) {
 			i.err = errors.New("pebble: SeekPrefixGE supplied with key outside of upper bound")
 			return false
 		}
 		key = upperBound
 	}
 
-	i.iterKey, i.iterValue = i.iter.SeekPrefixGE(i.prefixOrFullSeekKey, key, trySeekUsingNext)
+	i.iterKey, i.iterValue = i.iter.SeekPrefixGE(i.PrefixOrFullSeekKey, key, trySeekUsingNext)
 	valid := i.findNextEntry()
 	i.maybeSampleRead()
 	if i.Error() == nil {
@@ -613,6 +636,7 @@ func (i *Iterator) SeekLT(key []byte) bool {
 	i.lastPositioningOp = unknownLastPositionOp
 	i.err = nil // clear cached iteration error
 	i.hasPrefix = false
+	i.KeyUsedWithSeekNoopOpt = nil
 	if upperBound := i.opts.GetUpperBound(); upperBound != nil && i.cmp(key, upperBound) > 0 {
 		key = upperBound
 	} else if lowerBound := i.opts.GetLowerBound(); lowerBound != nil && i.cmp(key, lowerBound) < 0 {
@@ -622,14 +646,19 @@ func (i *Iterator) SeekLT(key []byte) bool {
 	// an iterator over a batch is iterating over mutable data, that may have
 	// changed since the last seek.
 	if lastPositioningOp == seekLTLastPositioningOp && i.batch == nil {
-		cmp := i.cmp(key, i.prefixOrFullSeekKey)
+		cmp := i.cmp(key, i.PrefixOrFullSeekKey)
 		// If this seek is to the same or earlier key, and the iterator is
 		// already positioned there, this is a noop. This can be helpful for
 		// sparse key spaces that have many deleted keys, where one can avoid
 		// the overhead of iterating past them again and again.
 		if cmp <= 0 && (!i.valid || i.cmp(i.key, key) < 0) {
-			if !invariants.Enabled || !disableSeekOpt(key, uintptr(unsafe.Pointer(i))) {
+			if !i.valid && i.Pos != IterPosCurReverse {
+				panic(fmt.Sprintf("unexpected pos: %d", i.Pos))
+			}
+			if !i.DisableSeekNoopOpt &&
+				(!invariants.Enabled || !disableSeekOpt(key, uintptr(unsafe.Pointer(i)))) {
 				i.lastPositioningOp = seekLTLastPositioningOp
+				i.KeyUsedWithSeekNoopOpt = append(i.KeyUsedWithSeekNoopOpt[:0], key...)
 				return i.valid
 			}
 		}
@@ -639,7 +668,7 @@ func (i *Iterator) SeekLT(key []byte) bool {
 	i.maybeSampleRead()
 	if i.Error() == nil && i.batch == nil {
 		// Prepare state for a future noop optimization.
-		i.prefixOrFullSeekKey = append(i.prefixOrFullSeekKey[:0], key...)
+		i.PrefixOrFullSeekKey = append(i.PrefixOrFullSeekKey[:0], key...)
 		i.lastPositioningOp = seekLTLastPositioningOp
 	}
 	return valid
@@ -684,10 +713,10 @@ func (i *Iterator) Next() bool {
 		return false
 	}
 	i.lastPositioningOp = unknownLastPositionOp
-	switch i.pos {
-	case iterPosCurForward:
+	switch i.Pos {
+	case IterPosCurForward:
 		i.nextUserKey()
-	case iterPosCurReverse:
+	case IterPosCurReverse:
 		// Switching directions.
 		// Unless the iterator was exhausted, reverse iteration needs to
 		// position the iterator at iterPosPrev.
@@ -703,7 +732,7 @@ func (i *Iterator) Next() bool {
 		} else {
 			i.iterKey, i.iterValue = i.iter.First()
 		}
-	case iterPosPrev:
+	case IterPosPrev:
 		// The underlying iterator is pointed to the previous key (this can only
 		// happen when switching iteration directions). We set i.valid to false
 		// here to force the calls to nextUserKey to save the current key i.iter is
@@ -721,7 +750,7 @@ func (i *Iterator) Next() bool {
 			i.nextUserKey()
 		}
 		i.nextUserKey()
-	case iterPosNext:
+	case IterPosNext:
 	}
 	valid := i.findNextEntry()
 	i.maybeSampleRead()
@@ -739,18 +768,18 @@ func (i *Iterator) Prev() bool {
 		i.err = errReversePrefixIteration
 		return false
 	}
-	switch i.pos {
-	case iterPosCurForward:
+	switch i.Pos {
+	case IterPosCurForward:
 		// Switching directions, and will handle this below.
-	case iterPosCurReverse:
+	case IterPosCurReverse:
 		i.prevUserKey()
-	case iterPosNext:
+	case IterPosNext:
 		// The underlying iterator is pointed to the next key (this can only happen
 		// when switching iteration directions). We will handle this below.
-	case iterPosPrev:
+	case IterPosPrev:
 	}
-	if i.pos == iterPosCurForward || i.pos == iterPosNext {
-		stepAgain := i.pos == iterPosNext
+	if i.Pos == IterPosCurForward || i.Pos == IterPosNext {
+		stepAgain := i.Pos == IterPosNext
 		// Switching direction.
 		// We set i.valid to false here to force the calls to prevUserKey to
 		// save the current key i.iter is pointing at in order to determine
@@ -852,19 +881,35 @@ func (i *Iterator) Close() error {
 	return err
 }
 
-// SetBounds sets the lower and upper bounds for the iterator. Note that the
-// iterator will always be invalidated and must be repositioned with a call to
-// SeekGE, SeekPrefixGE, SeekLT, First, or Last.
+// SetBounds sets the lower and upper bounds for the iterator. Note that:
+// - The slices provided in this SetBounds must not be changed by the caller
+//   until the iterator is closed, or a subsequent SetBounds has returned.
+//   This is because comparisons between the existing and new bounds are
+//   sometimes used to optimize seeking.
+// - If the bounds are not changing from the existing ones, it would be
+//   worthwhile for the caller to avoid calling SetBounds, since that allows
+//   for more seek optimizations. Note that the callee cannot itself look to
+//   see if the bounds are not changing and ignore the call, since the caller
+//   may then start mutating the underlying slices. Specifically, consider
+//   SetBounds(l1, u1), SetBounds(l2, u2) where l1=l2 and u1=u2. The callee
+//   cannot ignore the second call and keep using l1, u1, since the contract
+//   with the caller allows the caller to mutate l1, u1 after the second call
+//   returns, as mentioned in the previous bullet (ignoring in the callee
+//   resulted in a hard to find bug).
+// - The iterator will always be invalidated and must be repositioned with a
+//   call to SeekGE, SeekPrefixGE, SeekLT, First, or Last.
 func (i *Iterator) SetBounds(lower, upper []byte) {
-	lowerOrUpperDifferentNils := ((lower != nil) != (i.opts.LowerBound != nil)) ||
-		((upper != nil) != (i.opts.UpperBound != nil))
-	if !lowerOrUpperDifferentNils && bytes.Equal(lower, i.opts.LowerBound) &&
-		bytes.Equal(upper, i.opts.UpperBound) {
-		// Common noop that preserves seek optimizations. Note that nil is
-		// semantically different from an empty byte slice, but bytes.Equal
-		// does not distinguish between them.
-		return
-	}
+	/*
+		lowerOrUpperDifferentNils := ((lower != nil) != (i.opts.LowerBound != nil)) ||
+			((upper != nil) != (i.opts.UpperBound != nil))
+		if !lowerOrUpperDifferentNils && bytes.Equal(lower, i.opts.LowerBound) &&
+			bytes.Equal(upper, i.opts.UpperBound) {
+			// Common noop that preserves seek optimizations. Note that nil is
+			// semantically different from an empty byte slice, but bytes.Equal
+			// does not distinguish between them.
+			return
+		}
+	*/
 	// Even though this is not a positioning operation, the alteration of the
 	// bounds means we cannot optimize Seeks by using Next.
 	i.lastPositioningOp = unknownLastPositionOp
@@ -875,11 +920,11 @@ func (i *Iterator) SetBounds(lower, upper []byte) {
 	// should call a repositioning method. We could have arbitrarily set i.pos
 	// to one of the values. But it results in more intuitive behavior in
 	// tests, which do not always reposition.
-	switch i.pos {
-	case iterPosCurForward, iterPosNext:
-		i.pos = iterPosCurForward
-	case iterPosCurReverse, iterPosPrev:
-		i.pos = iterPosCurReverse
+	switch i.Pos {
+	case IterPosCurForward, IterPosNext:
+		i.Pos = IterPosCurForward
+	case IterPosCurReverse, IterPosPrev:
+		i.Pos = IterPosCurReverse
 	}
 	i.valid = false
 

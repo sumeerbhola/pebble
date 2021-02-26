@@ -969,7 +969,7 @@ set-bounds lower=b
 ----
 .
 b:b
-b:b
+.
 
 iter seq=2
 seek-ge a

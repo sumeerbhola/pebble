@@ -148,10 +148,10 @@ type compactionIter struct {
 	// snapshot stripe should be skipped or processed. An example of a non-
 	// skippable entry is a range tombstone as we need to return it from the
 	// `compactionIter`, even if a key covering its start key has already been
-	// seen in the same stripe. `skip` has no effect when `pos == iterPosNext`.
+	// seen in the same stripe. `skip` has no effect when `pos == IterPosNext`.
 	skip bool
 	// `pos` indicates the iterator position at the top of `Next()`. Its type's
-	// (`iterPos`) values take on the following meanings in the context of
+	// (`IterPos`) values take on the following meanings in the context of
 	// `compactionIter`.
 	//
 	// - `iterPosCur`: the iterator is at the last key returned.
@@ -160,7 +160,7 @@ type compactionIter struct {
 	//   where we advance the iterator all the way into the next stripe or next
 	//   user key to ensure we've seen all mergeable operands.
 	// - `iterPosPrev`: this is invalid as compactionIter is forward-only.
-	pos iterPos
+	pos IterPos
 	// The index of the snapshot for the current key within the snapshots slice.
 	curSnapshotIdx    int
 	curSnapshotSeqNum uint64
@@ -215,7 +215,7 @@ func (i *compactionIter) First() (*InternalKey, []byte) {
 	if i.iterKey != nil {
 		i.curSnapshotIdx, i.curSnapshotSeqNum = snapshotIndex(i.iterKey.SeqNum(), i.snapshots)
 	}
-	i.pos = iterPosNext
+	i.pos = IterPosNext
 	return i.Next()
 }
 
@@ -242,7 +242,7 @@ func (i *compactionIter) Next() (*InternalKey, []byte) {
 	//   snapshot stripe.
 	// - `skip && pos == iterPosCur`: We are at the key that has been returned.
 	//   To move forward we skip skippable entries in the stripe.
-	if i.pos == iterPosCurForward {
+	if i.pos == IterPosCurForward {
 		if i.skip {
 			i.skipInStripe()
 		} else {
@@ -250,7 +250,7 @@ func (i *compactionIter) Next() (*InternalKey, []byte) {
 		}
 	}
 
-	i.pos = iterPosCurForward
+	i.pos = IterPosCurForward
 	i.valid = false
 	for i.iterKey != nil {
 		if i.iterKey.Kind() == InternalKeyKindRangeDelete {
@@ -450,7 +450,7 @@ func (i *compactionIter) mergeNext(valueMerger ValueMerger) stripeChangeType {
 	// them.
 	for {
 		if change := i.nextInStripe(); change == sameStripeNonSkippable || change == newStripe {
-			i.pos = iterPosNext
+			i.pos = IterPosNext
 			return change
 		}
 		key := i.iterKey
@@ -520,7 +520,7 @@ func (i *compactionIter) singleDeleteNext() bool {
 	// Loop until finds a key to be passed to the next level.
 	for {
 		if change := i.nextInStripe(); change == sameStripeNonSkippable || change == newStripe {
-			i.pos = iterPosNext
+			i.pos = IterPosNext
 			return true
 		}
 
