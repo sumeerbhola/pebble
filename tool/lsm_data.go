@@ -626,16 +626,16 @@ let version = {
 
             // Render the sstables for the level.
             let level = g.selectAll("rect." + this.levelsInfo[i].levelClass).data(this.levelsInfo[i].files);
-            level.attr("fill", "#555").attr("x", (fileNum, i) => i);
+            level.attr("fill", "#555").attr("x", (fileNum, i) => i*5).attr("width", 5);
             level
                 .enter()
                 .append("rect")
                 .attr("class", this.levelsInfo[i].levelClass + " sstable")
                 .attr("id", fileNum => fileNum)
                 .attr("fill", "red")
-                .attr("x", (fileNum, i) => i)
+                .attr("x", (fileNum, i) => i*5)
                 .attr("y", 0)
-                .attr("width", 1)
+                .attr("width", 5)
                 .attr("height", fileNum => version.height(fileNum));
             level.exit().remove();
         }
@@ -654,7 +654,7 @@ let version = {
         // SVG element. Adjust to be relative to the
         // level position.
         let mousex = d3.mouse(vis.node())[0] - lineStart;
-        let index = Math.round(mousex / this.scale(i));
+        let index = Math.round(mousex / (this.scale(i)*5));
         if (index < 0) {
             index = 0;
         } else if (index >= this.levelsInfo[i].files.length) {
@@ -694,11 +694,11 @@ let version = {
                     }
                 }
                 if (k === t) {
-                    indicator.attr("x", lineStart + s * t).attr("width", s);
+                    indicator.attr("x", lineStart + s * t * 5).attr("width", s);
                 } else {
                     indicator
-                        .attr("x", lineStart + s * t)
-                        .attr("width", Math.max(0.5, s * (k - t)));
+                        .attr("x", lineStart + s * t * 5)
+                        .attr("width", Math.max(0.5, s * (k - t) * 5));
                 }
                 if (i + 1 === j && k > t) {
                     let overlapSize = this.levelsInfo[j].files
@@ -733,7 +733,7 @@ let version = {
 
         vis
             .select("g.clip" + this.levelsInfo[i].levelClass + " rect.indicator")
-            .attr("x", lineStart + this.scale(i) * index)
+            .attr("x", lineStart + this.scale(i) * index * 5)
             .attr("width", 1);
     },
 

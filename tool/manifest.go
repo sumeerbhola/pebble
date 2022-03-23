@@ -7,6 +7,7 @@ package tool
 import (
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 type manifestT struct {
 	Root      *cobra.Command
 	Dump      *cobra.Command
+	L0        *cobra.Command
 	Summarize *cobra.Command
 	Check     *cobra.Command
 
@@ -33,6 +35,7 @@ type manifestT struct {
 	verbose   bool
 
 	summarizeDur time.Duration
+	endEdit      int
 }
 
 func newManifest(opts *pebble.Options, comparers sstable.Comparers) *manifestT {
@@ -64,6 +67,18 @@ Print the contents of the MANIFEST files.
 
 	m.Dump.Flags().Var(
 		&m.fmtKey, "key", "key formatter")
+
+	m.L0 = &cobra.Command{
+		Use:   "l0 <manifest-files>",
+		Short: "",
+		Long: `
+TODO.
+`,
+		Args: cobra.MinimumNArgs(1),
+		Run:  m.runL0,
+	}
+	m.Root.AddCommand(m.L0)
+	m.L0.Flags().IntVar(&m.endEdit, "end-edit", math.MaxInt, "ending edit # to include")
 
 	// Add summarize command
 	m.Summarize = &cobra.Command{
@@ -227,6 +242,142 @@ func (m *manifestT) runDump(cmd *cobra.Command, args []string) {
 					return
 				}
 				m.printLevels(v)
+			}
+		}()
+	}
+}
+
+func (m *manifestT) runL0(cmd *cobra.Command, args []string) {
+	for _, arg := range args {
+		func() {
+			f, err := m.opts.FS.Open(arg)
+			if err != nil {
+				fmt.Fprintf(stderr, "%s\n", err)
+				return
+			}
+			defer f.Close()
+
+			fmt.Fprintf(stdout, "%s\n", arg)
+
+			var bve manifest.BulkVersionEdit
+			bve.AddedByFileNum = make(map[base.FileNum]*manifest.FileMetadata)
+			var cmp *base.Comparer
+			var editIdx int
+			rr := record.NewReader(f, 0 /* logNum */)
+			for {
+				offset := rr.Offset()
+				r, err := rr.Next()
+				if err != nil {
+					fmt.Fprintf(stdout, "%s\n", err)
+					break
+				}
+
+				var ve manifest.VersionEdit
+				err = ve.Decode(r)
+				if err != nil {
+					fmt.Fprintf(stdout, "%s\n", err)
+					break
+				}
+				if err := bve.Accumulate(&ve); err != nil {
+					fmt.Fprintf(stdout, "%s\n", err)
+					break
+				}
+
+				empty := true
+				fmt.Fprintf(stdout, "%d/%d\n", offset, editIdx)
+				if ve.ComparerName != "" {
+					empty = false
+					// fmt.Fprintf(stdout, "  comparer:     %s", ve.ComparerName)
+					cmp = m.comparers[ve.ComparerName]
+					if cmp == nil {
+						// fmt.Fprintf(stdout, " (unknown)")
+					}
+					// fmt.Fprintf(stdout, "\n")
+					m.fmtKey.setForComparer(ve.ComparerName, m.comparers)
+				}
+				if ve.MinUnflushedLogNum != 0 {
+					empty = false
+					// fmt.Fprintf(stdout, "  log-num:       %d\n", ve.MinUnflushedLogNum)
+				}
+				if ve.ObsoletePrevLogNum != 0 {
+					empty = false
+					// fmt.Fprintf(stdout, "  prev-log-num:  %d\n", ve.ObsoletePrevLogNum)
+				}
+				if ve.NextFileNum != 0 {
+					empty = false
+					// fmt.Fprintf(stdout, "  next-file-num: %d\n", ve.NextFileNum)
+				}
+				if ve.LastSeqNum != 0 {
+					empty = false
+					// fmt.Fprintf(stdout, "  last-seq-num:  %d\n", ve.LastSeqNum)
+				}
+				entries := make([]manifest.DeletedFileEntry, 0, len(ve.DeletedFiles))
+				for df := range ve.DeletedFiles {
+					empty = false
+					entries = append(entries, df)
+				}
+				sort.Slice(entries, func(i, j int) bool {
+					if entries[i].Level != entries[j].Level {
+						return entries[i].Level < entries[j].Level
+					}
+					return entries[i].FileNum < entries[j].FileNum
+				})
+				for range entries {
+					// fmt.Fprintf(stdout, "  deleted:       L%d %s\n", df.Level, df.FileNum)
+				}
+				for _, nf := range ve.NewFiles {
+					empty = false
+					// fmt.Fprintf(stdout, "  added:         L%d %s:%d",
+					// 	nf.Level, nf.Meta.FileNum, nf.Meta.Size)
+					// formatSeqNumRange(stdout, nf.Meta.SmallestSeqNum, nf.Meta.LargestSeqNum)
+					// formatKeyRange(stdout, m.fmtKey, &nf.Meta.Smallest, &nf.Meta.Largest)
+					if nf.Meta.CreationTime != 0 {
+						// fmt.Fprintf(stdout, " (%s)",
+						//	time.Unix(nf.Meta.CreationTime, 0).UTC().Format(time.RFC3339))
+					}
+					// fmt.Fprintf(stdout, "\n")
+				}
+				if empty {
+					// NB: An empty version edit can happen if we log a version edit with
+					// a zero field. RocksDB does this with a version edit that contains
+					// `LogNum == 0`.
+					// fmt.Fprintf(stdout, "  <empty>\n")
+				}
+				editIdx++
+				if editIdx > m.endEdit {
+					break
+				}
+			}
+
+			if cmp != nil {
+				v, _, err := bve.Apply(nil /* version */, cmp.Compare, m.fmtKey.fn, 0, m.opts.Experimental.ReadCompactionRate)
+				if err != nil {
+					fmt.Fprintf(stdout, "%s\n", err)
+					return
+				}
+				m.printLevels(v)
+				concurrentCompactions := 0
+				for {
+					files, err := v.L0Sublevels.PickBaseCompaction(1, v.Levels[1].Slice())
+					if err != nil {
+						panic(err)
+					}
+					if files == nil {
+						break
+					}
+					concurrentCompactions++
+					cfiles := make([]*manifest.FileMetadata, 0, len(files.Files))
+					iter := v.Levels[0].Iter()
+					for j, f := 0, iter.First(); f != nil; j, f = j+1, iter.Next() {
+						if files.FilesIncluded[f.L0Index] {
+							cfiles = append(cfiles, f)
+						}
+					}
+					cfilesSlice := manifest.NewLevelSliceSeqSorted(cfiles)
+					v.L0Sublevels.UpdateStateForStartedCompaction(
+						[]manifest.LevelSlice{cfilesSlice}, true)
+				}
+				fmt.Printf("Num concurrent compactions from L0: %d\n", concurrentCompactions)
 			}
 		}()
 	}
