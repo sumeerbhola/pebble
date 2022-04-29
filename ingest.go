@@ -440,7 +440,7 @@ func ingestTargetLevel(
 	baseLevel int,
 	compactions map[*compaction]struct{},
 	meta *fileMetadata,
-) (int, error) {
+) (int, SSTIngestDetails, error) {
 	// Find the lowest level which does not have any files which overlap meta. We
 	// search from L0 to L6 looking for whether there are any files in the level
 	// which overlap meta. We want the "lowest" level (where lower means
@@ -500,7 +500,8 @@ func ingestTargetLevel(
 	// overlap".
 
 	targetLevel := 0
-
+	ingestDetails := SSTIngestDetails{
+		Bytes: meta.Size, HighestLevelWithDataOverlap: 7, BaseLevel: uint8(baseLevel)}
 	// Do we overlap with keys in L0?
 	iter := v.Levels[0].Iter()
 	for meta0 := iter.First(); meta0 != nil; meta0 = iter.Next() {
@@ -512,7 +513,7 @@ func ingestTargetLevel(
 
 		iter, rangeDelIter, err := newIters(iter.Current(), nil, nil)
 		if err != nil {
-			return 0, err
+			return 0, SSTIngestDetails{}, err
 		}
 		overlap := overlapWithIterator(iter, &rangeDelIter, meta, cmp)
 		iter.Close()
@@ -520,7 +521,9 @@ func ingestTargetLevel(
 			rangeDelIter.Close()
 		}
 		if overlap {
-			return targetLevel, nil
+			ingestDetails.IngestedLevel = uint8(targetLevel)
+			ingestDetails.HighestLevelWithDataOverlap = 0
+			return targetLevel, ingestDetails, nil
 		}
 	}
 
@@ -535,7 +538,9 @@ func ingestTargetLevel(
 		overlap := overlapWithIterator(levelIter, &rangeDelIter, meta, cmp)
 		levelIter.Close() // Closes range del iter as well.
 		if overlap {
-			return targetLevel, nil
+			ingestDetails.IngestedLevel = uint8(targetLevel)
+			ingestDetails.HighestLevelWithDataOverlap = uint8(level)
+			return targetLevel, ingestDetails, nil
 		}
 
 		// Check boundary overlap.
@@ -567,7 +572,8 @@ func ingestTargetLevel(
 			targetLevel = level
 		}
 	}
-	return targetLevel, nil
+	ingestDetails.IngestedLevel = uint8(targetLevel)
+	return targetLevel, ingestDetails, nil
 }
 
 // Ingest ingests a set of sstables into the DB. Ingestion of the files is
@@ -634,6 +640,18 @@ type IngestOperationStats struct {
 	// be approximate once https://github.com/cockroachdb/pebble/issues/25 is
 	// implemented.
 	ApproxIngestedIntoL0Bytes uint64
+	IngestDetails             []SSTIngestDetails
+}
+
+type SSTIngestDetails struct {
+	Bytes uint64
+	// INVARIANT:
+	// IngestedLevel > 0 => No boundary overlap at IngestedLevel
+	IngestedLevel uint8
+	// INVARIANT:
+	// HighestLevelWithDataOverlap > 0 => IngestedLevel < HighestLevelWithDataOverlap
+	HighestLevelWithDataOverlap uint8
+	BaseLevel                   uint8
 }
 
 // IngestWithStats does the same as Ingest, and additionally returns
@@ -723,6 +741,7 @@ func (d *DB) ingest(
 	}
 
 	var ve *versionEdit
+	var sstDetails []SSTIngestDetails
 	apply := func(seqNum uint64) {
 		if err != nil {
 			// An error occurred during prepare.
@@ -747,7 +766,7 @@ func (d *DB) ingest(
 
 		// Assign the sstables to the correct level in the LSM and apply the
 		// version edit.
-		ve, err = d.ingestApply(jobID, meta, targetLevelFunc)
+		ve, sstDetails, err = d.ingestApply(jobID, meta, targetLevelFunc)
 	}
 
 	d.commit.AllocateSeqNum(len(meta), prepare, apply)
@@ -770,6 +789,7 @@ func (d *DB) ingest(
 		Err:          err,
 	}
 	var stats IngestOperationStats
+	stats.IngestDetails = sstDetails
 	if ve != nil {
 		info.Tables = make([]struct {
 			TableInfo
@@ -798,11 +818,11 @@ type ingestTargetLevelFunc func(
 	baseLevel int,
 	compactions map[*compaction]struct{},
 	meta *fileMetadata,
-) (int, error)
+) (int, SSTIngestDetails, error)
 
 func (d *DB) ingestApply(
 	jobID int, meta []*fileMetadata, findTargetLevel ingestTargetLevelFunc,
-) (*versionEdit, error) {
+) (*versionEdit, []SSTIngestDetails, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -821,17 +841,20 @@ func (d *DB) ingestApply(
 	current := d.mu.versions.currentVersion()
 	baseLevel := d.mu.versions.picker.getBaseLevel()
 	iterOps := IterOptions{logger: d.opts.Logger}
+	sstDetails := make([]SSTIngestDetails, 0, len(meta))
 	for i := range meta {
 		// Determine the lowest level in the LSM for which the sstable doesn't
 		// overlap any existing files in the level.
 		m := meta[i]
 		f := &ve.NewFiles[i]
 		var err error
-		f.Level, err = findTargetLevel(d.newIters, iterOps, d.cmp, current, baseLevel, d.mu.compact.inProgress, m)
+		var details SSTIngestDetails
+		f.Level, details, err = findTargetLevel(d.newIters, iterOps, d.cmp, current, baseLevel, d.mu.compact.inProgress, m)
 		if err != nil {
 			d.mu.versions.logUnlock()
-			return nil, err
+			return nil, nil, err
 		}
+		sstDetails = append(sstDetails, details)
 		f.Meta = m
 		levelMetrics := metrics[f.Level]
 		if levelMetrics == nil {
@@ -846,7 +869,7 @@ func (d *DB) ingestApply(
 	if err := d.mu.versions.logAndApply(jobID, ve, metrics, false /* forceRotation */, func() []compactionInfo {
 		return d.getInProgressCompactionInfoLocked(nil)
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	d.updateReadStateLocked(d.opts.DebugCheck, nil)
 	d.updateTableStatsLocked(ve.NewFiles)
@@ -855,7 +878,7 @@ func (d *DB) ingestApply(
 	// so check to see if one is necessary and schedule it.
 	d.maybeScheduleCompaction()
 	d.maybeValidateSSTablesLocked(ve.NewFiles)
-	return ve, nil
+	return ve, sstDetails, nil
 }
 
 // maybeValidateSSTablesLocked adds the slice of newFileEntrys to the pending

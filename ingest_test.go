@@ -553,12 +553,12 @@ func TestIngestTargetLevel(t *testing.T) {
 			var buf bytes.Buffer
 			for _, target := range strings.Split(td.Input, "\n") {
 				meta := parseMeta(target)
-				level, err := ingestTargetLevel(d.newIters, IterOptions{logger: d.opts.Logger},
+				level, details, err := ingestTargetLevel(d.newIters, IterOptions{logger: d.opts.Logger},
 					d.cmp, d.mu.versions.currentVersion(), 1, d.mu.compact.inProgress, meta)
 				if err != nil {
 					return err.Error()
 				}
-				fmt.Fprintf(&buf, "%d\n", level)
+				fmt.Fprintf(&buf, "%d, %+v\n", level, details)
 			}
 			return buf.String()
 
@@ -1016,7 +1016,7 @@ func TestIngestStats(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ingest := func(expectedLevel int, keys ...string) {
+	ingest := func(expectedLevel int, expectedDetails string, keys ...string) {
 		t.Helper()
 		f, err := mem.Create("ext")
 		require.NoError(t, err)
@@ -1034,11 +1034,30 @@ func TestIngestStats(t *testing.T) {
 			require.EqualValues(t, 0, stats.ApproxIngestedIntoL0Bytes)
 		}
 		require.Less(t, uint64(0), stats.Bytes)
+		var details strings.Builder
+		for i := range stats.IngestDetails {
+			fmt.Fprintf(&details, "%+v ", stats.IngestDetails[i])
+		}
+		require.Equal(t, expectedDetails, details.String())
 	}
-	ingest(6, "a")
-	ingest(0, "a")
-	ingest(6, "b", "g")
-	ingest(0, "c")
+	ingest(6,
+		"{Bytes:825 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:6} ",
+		"a")
+	ingest(0,
+		"{Bytes:825 IngestedLevel:0 HighestLevelWithDataOverlap:6 BaseLevel:6} ",
+		"a")
+	ingest(6,
+		"{Bytes:829 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:6} ",
+		"b", "g")
+	ingest(0,
+		"{Bytes:825 IngestedLevel:0 HighestLevelWithDataOverlap:7 BaseLevel:6} ",
+		"c")
+	ingest(0,
+		"{Bytes:825 IngestedLevel:0 HighestLevelWithDataOverlap:6 BaseLevel:6} ",
+		"b")
+	ingest(0,
+		"{Bytes:825 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:6} ",
+		"a")
 	require.NoError(t, d.Close())
 }
 

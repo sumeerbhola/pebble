@@ -5,7 +5,7 @@ define
 target
 a-b
 ----
-6
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
 
 define
 L5
@@ -21,9 +21,9 @@ a-b
 b-c
 c-d
 ----
-4
-4
-4
+4, {Bytes:0 IngestedLevel:4 HighestLevelWithDataOverlap:5 BaseLevel:1}
+4, {Bytes:0 IngestedLevel:4 HighestLevelWithDataOverlap:5 BaseLevel:1}
+4, {Bytes:0 IngestedLevel:4 HighestLevelWithDataOverlap:5 BaseLevel:1}
 
 # Non-overlapping cases:
 # - Ingested file lies entirely before the existing file.
@@ -35,9 +35,9 @@ a-aa
 d-e
 bb-bb
 ----
-6
-6
-6
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
 
 define
 L0
@@ -66,22 +66,22 @@ target
 b-c
 d-e
 ----
-0
-0
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:1}
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:1}
 
 # Files overlap with L3. Files ingested into L2.
 target
 g-m
 ----
-2
+2, {Bytes:0 IngestedLevel:2 HighestLevelWithDataOverlap:3 BaseLevel:1}
 
 # No overlap. Files ingested into L6.
 target
 i-m
 c-c
 ----
-6
-6
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
 
 define
 L5
@@ -104,7 +104,7 @@ L6
 target
 b-b
 ----
-6
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
 
 define
 L5
@@ -129,7 +129,7 @@ L6
 target
 b-b
 ----
-5
+5, {Bytes:0 IngestedLevel:5 HighestLevelWithDataOverlap:7 BaseLevel:1}
 
 define
 L0
@@ -153,9 +153,9 @@ c-c
 d-d
 e-e
 ----
-0
-0
-0
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:1}
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:1}
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:0 BaseLevel:1}
 
 # Non-overlapping cases:
 # - The ingested file [cc,cc] slips through L0, but is kept at L1 by the
@@ -168,9 +168,9 @@ cc-cc
 g-g
 a-a
 ----
-1
-6
-1
+1, {Bytes:0 IngestedLevel:1 HighestLevelWithDataOverlap:2 BaseLevel:1}
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
+1, {Bytes:0 IngestedLevel:1 HighestLevelWithDataOverlap:2 BaseLevel:1}
 
 # A more complicated example demonstrating data overlap.
 #            |--|        ingested file: [d-e] - data overlap
@@ -194,12 +194,12 @@ L1
 target
 d-e
 ----
-0
+0, {Bytes:0 IngestedLevel:0 HighestLevelWithDataOverlap:1 BaseLevel:1}
 
 # No data overlap.
 target
 cc-d
 ee-ff
 ----
-6
-6
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}
+6, {Bytes:0 IngestedLevel:6 HighestLevelWithDataOverlap:7 BaseLevel:1}

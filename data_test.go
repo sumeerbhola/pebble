@@ -895,8 +895,8 @@ func runForceIngestCmd(td *datadriven.TestData, d *DB) error {
 		int,
 		map[*compaction]struct{},
 		*fileMetadata,
-	) (int, error) {
-		return level, nil
+	) (int, SSTIngestDetails, error) {
+		return level, SSTIngestDetails{}, nil
 	})
 	return err
 }
