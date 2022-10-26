@@ -409,6 +409,11 @@ func TestMeta(t *testing.T) {
 	var names []string
 	options := map[string]*testOptions{}
 	for i, opts := range standardOptions() {
+		for j := range opts.opts.Levels {
+			opts.opts.Levels[j].BlockSize = 1
+			opts.opts.Levels[j].IndexBlockSize = 60
+		}
+
 		name := fmt.Sprintf("standard-%03d", i)
 		names = append(names, name)
 		options[name] = opts

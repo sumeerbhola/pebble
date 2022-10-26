@@ -323,9 +323,9 @@ func randomOptions(rng *rand.Rand) *testOptions {
 	}
 	var lopts pebble.LevelOptions
 	lopts.BlockRestartInterval = 1 + rng.Intn(64)  // 1 - 64
-	lopts.BlockSize = 1 << uint(rng.Intn(24))      // 1 - 16MB
+	lopts.BlockSize = 1 << uint(rng.Intn(6))      // 1 - 16MB
 	lopts.BlockSizeThreshold = 50 + rng.Intn(50)   // 50 - 100
-	lopts.IndexBlockSize = 1 << uint(rng.Intn(24)) // 1 - 16MB
+	lopts.IndexBlockSize = 1 << uint(rng.Intn(8)) // 1 - 16MB
 	lopts.TargetFileSize = 1 << uint(rng.Intn(28)) // 1 - 256MB
 	opts.Levels = []pebble.LevelOptions{lopts}
 

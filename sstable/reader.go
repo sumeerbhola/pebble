@@ -1595,7 +1595,7 @@ func (i *twoLevelIterator) MaybeFilteredKeys() bool {
 func (i *twoLevelIterator) SeekGE(key []byte, flags base.SeekGEFlags) (*InternalKey, []byte) {
 	err := i.err
 	i.err = nil // clear cached iteration error
-
+        i.exhaustedBounds = 0
 	// TODO(sumeer): we are not fully optimizing in the flags.TrySeekUsingNext()
 	// case when the twoLevelIterator is already exhausted. We will take the
 	// slow-path below, even though we could return now. We could do:
