@@ -22,8 +22,7 @@ func TestValueHandleEncodeDecode(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("%+v", tc), func(t *testing.T) {
 			n := encodeValueHandle(buf[:], tc)
-			vh, err := decodeValueHandle(buf[:n])
-			require.NoError(t, err)
+			vh := decodeValueHandle(buf[:n])
 			require.Equal(t, tc, vh)
 		})
 	}

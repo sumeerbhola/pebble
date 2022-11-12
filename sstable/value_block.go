@@ -12,6 +12,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/pebble/internal/base"
+	"github.com/cockroachdb/pebble/internal/cache"
 	"github.com/cockroachdb/pebble/internal/invariants"
 	"golang.org/x/exp/rand"
 )
@@ -190,41 +191,76 @@ func setHasSamePrefix(b valuePrefix) bool {
 	return b&setHasSameKeyPrefixMask == setHasSameKeyPrefixMask
 }
 
-func decodeValueHandle(src []byte) (valueHandle, error) {
+func decodeLenFromValueHandle(src []byte) (uint32, []byte) {
+	ptr := unsafe.Pointer(&src[0])
+	var v uint32
+	if a := *((*uint8)(ptr)); a < 128 {
+		v = uint32(a)
+		src = src[1:]
+	} else if a, b := a&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 1))); b < 128 {
+		v = uint32(b)<<7 | uint32(a)
+		src = src[2:]
+	} else if b, c := b&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 2))); c < 128 {
+		v = uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		src = src[3:]
+	} else if c, d := c&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 3))); d < 128 {
+		v = uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		src = src[4:]
+	} else {
+		d, e := d&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 4)))
+		v = uint32(e)<<28 | uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		src = src[5:]
+	}
+	return v, src
+}
+
+func decodeRemainingValueHandle(src []byte) valueHandle {
 	var vh valueHandle
 	ptr := unsafe.Pointer(&src[0])
-	for i := 0; i < 3; i++ {
-		// Manually inlined uvarint decoding. Saves ~25% in
-		// BenchmarkValueBlocks/valueSize=100/versions=10/needValue=true/hasCache=true.
-		// If needed we can also unroll the loop, as done in blockIter.readEntry.
-		var v uint32
-		if a := *((*uint8)(ptr)); a < 128 {
-			v = uint32(a)
-			ptr = unsafe.Pointer(uintptr(ptr) + 1)
-		} else if a, b := a&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 1))); b < 128 {
-			v = uint32(b)<<7 | uint32(a)
-			ptr = unsafe.Pointer(uintptr(ptr) + 2)
-		} else if b, c := b&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 2))); c < 128 {
-			v = uint32(c)<<14 | uint32(b)<<7 | uint32(a)
-			ptr = unsafe.Pointer(uintptr(ptr) + 3)
-		} else if c, d := c&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 3))); d < 128 {
-			v = uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
-			ptr = unsafe.Pointer(uintptr(ptr) + 4)
-		} else {
-			d, e := d&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 4)))
-			v = uint32(e)<<28 | uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
-			ptr = unsafe.Pointer(uintptr(ptr) + 5)
-		}
-		switch i {
-		case 0:
-			vh.valueLen = v
-		case 1:
-			vh.blockNum = v
-		case 2:
-			vh.offsetInBlock = v
-		}
+	// Manually inlined uvarint decoding. Saves ~25% in benchmarks. Unrolling
+	// a loop for i:=0; i<2; i++, saves ~6%.
+	var v uint32
+	if a := *((*uint8)(ptr)); a < 128 {
+		v = uint32(a)
+		ptr = unsafe.Pointer(uintptr(ptr) + 1)
+	} else if a, b := a&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 1))); b < 128 {
+		v = uint32(b)<<7 | uint32(a)
+		ptr = unsafe.Pointer(uintptr(ptr) + 2)
+	} else if b, c := b&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 2))); c < 128 {
+		v = uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		ptr = unsafe.Pointer(uintptr(ptr) + 3)
+	} else if c, d := c&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 3))); d < 128 {
+		v = uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		ptr = unsafe.Pointer(uintptr(ptr) + 4)
+	} else {
+		d, e := d&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 4)))
+		v = uint32(e)<<28 | uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+		ptr = unsafe.Pointer(uintptr(ptr) + 5)
 	}
-	return vh, nil
+	vh.blockNum = v
+
+	if a := *((*uint8)(ptr)); a < 128 {
+		v = uint32(a)
+	} else if a, b := a&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 1))); b < 128 {
+		v = uint32(b)<<7 | uint32(a)
+	} else if b, c := b&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 2))); c < 128 {
+		v = uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+	} else if c, d := c&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 3))); d < 128 {
+		v = uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+	} else {
+		d, e := d&0x7f, *((*uint8)(unsafe.Pointer(uintptr(ptr) + 4)))
+		v = uint32(e)<<28 | uint32(d)<<21 | uint32(c)<<14 | uint32(b)<<7 | uint32(a)
+	}
+	vh.offsetInBlock = v
+
+	return vh
+}
+
+func decodeValueHandle(src []byte) valueHandle {
+	valLen, src := decodeLenFromValueHandle(src)
+	vh := decodeRemainingValueHandle(src)
+	vh.valueLen = valLen
+	return vh
 }
 
 // valueBlocksIndexHandle is placed in the metaindex if there are any value
@@ -590,6 +626,15 @@ func lenLittleEndian(v uint64) int {
 	return n
 }
 
+func littleEndianGet(b []byte, n int) uint64 {
+	_ = b[n-1] // bounds check
+	v := uint64(b[0])
+	for i := 1; i < n; i++ {
+		v |= uint64(b[i]) << (8 * i)
+	}
+	return v
+}
+
 // UserKeyPrefixBound represents a [Lower,Upper) bound of user key prefixes.
 // If both are nil, there is no bound specified. Else, Compare(Lower,Upper)
 // must be < 0.
@@ -603,4 +648,189 @@ type UserKeyPrefixBound struct {
 // IsEmpty returns true iff the bound is empty.
 func (ukb *UserKeyPrefixBound) IsEmpty() bool {
 	return len(ukb.Lower) == 0 && len(ukb.Upper) == 0
+}
+
+type blockProviderWhenOpen interface {
+	readBlockForVBR(h BlockHandle, stats *base.InternalIteratorStats) (cache.Handle, error)
+}
+
+type blockProviderWhenClosed struct {
+	rp     ReaderProvider
+	r      *Reader
+	handle interface{}
+}
+
+func (bpwc *blockProviderWhenClosed) open() error {
+	var err error
+	bpwc.r, bpwc.handle, err = bpwc.rp.GetReader()
+	return err
+}
+
+func (bpwc *blockProviderWhenClosed) close() {
+	bpwc.rp.Close(bpwc.handle)
+	bpwc.r = nil
+	bpwc.handle = nil
+}
+
+func (bpwc blockProviderWhenClosed) readBlockForVBR(
+	h BlockHandle, stats *base.InternalIteratorStats,
+) (cache.Handle, error) {
+	return bpwc.r.readBlock(h, nil, nil, stats)
+}
+
+// ReaderProvider supports the implementation of blockProviderWhenClosed.
+// GetReader and Close can be called multiple times in pairs.
+type ReaderProvider interface {
+	GetReader() (r *Reader, handle interface{}, err error)
+	Close(handle interface{})
+}
+
+// TrivialReaderProvider implements ReaderProvider for a Reader that will
+// outlive the top-level iterator in the iterator tree.
+type TrivialReaderProvider struct {
+	*Reader
+}
+
+// GetReader implements ReaderProvider.
+func (trp TrivialReaderProvider) GetReader() (*Reader, interface{}, error) {
+	return trp.Reader, nil, nil
+}
+
+// Close implements ReaderProvider.
+func (trp TrivialReaderProvider) Close(_ interface{}) {}
+
+// valueBlockReader is used to retrieve values in value
+// blocks. It is used when the sstable was written with
+// Properties.ValueBlocksAreEnabled.
+type valueBlockReader struct {
+	bpOpen blockProviderWhenOpen
+	rp     ReaderProvider
+	vbih   valueBlocksIndexHandle
+	stats  *base.InternalIteratorStats
+
+	// The value blocks index is lazily retrieved the first time the reader
+	// needs to read a value that resides in a value block.
+	vbiBlock []byte
+	vbiCache cache.Handle
+	// When sequentially iterating through all key-value pairs, the cost of
+	// repeatedly getting a block that is already in the cache and releasing the
+	// cache.Handle can be ~40% of the cpu overhead. So the reader remembers the
+	// last value block it retrieved, in case there is locality of access, and
+	// this value block can be used for the next value retrieval.
+	valueBlockNum uint32
+	valueBlock    []byte
+	valueBlockPtr unsafe.Pointer
+	valueCache    cache.Handle
+	lazyFetcher   base.LazyFetcher
+	closed        bool
+}
+
+func (r *valueBlockReader) getLazyValueForValueHandle(handle []byte) base.LazyValue {
+	fetcher := &r.lazyFetcher
+	valLen, h := decodeLenFromValueHandle(handle[1:])
+	*fetcher = base.LazyFetcher{
+		ValueFetcher: r.getValue,
+		Attribute: base.AttributeAndLen{
+			ValueLen:       int32(valLen),
+			ShortAttribute: getShortAttribute(valuePrefix(handle[0])),
+		},
+	}
+	return base.LazyValue{
+		ValueOrHandle: h,
+		Fetcher:       fetcher,
+	}
+}
+
+func (r *valueBlockReader) close() {
+	r.bpOpen = nil
+	r.vbiBlock = nil
+	r.vbiCache.Release()
+	r.valueBlock = nil
+	r.valueBlockPtr = nil
+	r.valueCache.Release()
+	r.closed = true
+	// rp, vbih, stats remain valid, so that LazyFetcher.ValueFetcher can be
+	// implemented.
+}
+
+func (r *valueBlockReader) getValue(
+	handle []byte, valLen int32, buf []byte,
+) (val []byte, callerOwned bool, err error) {
+	if !r.closed {
+		return r.getValueInternal(handle, valLen, buf)
+	}
+	bp := blockProviderWhenClosed{rp: r.rp}
+	err = bp.open()
+	if err != nil {
+		return nil, false, err
+	}
+	defer bp.close()
+	defer r.close()
+	r.bpOpen = bp
+	var v []byte
+	v, callerOwned, err = r.getValueInternal(handle, valLen, buf)
+	if err != nil {
+		return nil, false, err
+	}
+	if invariants.Enabled && callerOwned {
+		panic("callerOwned must be false")
+	}
+	buf = append(buf, v...)
+	return buf, true, nil
+}
+
+func (r *valueBlockReader) getValueInternal(
+	handle []byte, valLen int32, buf []byte,
+) (val []byte, callerOwned bool, err error) {
+	vh := decodeRemainingValueHandle(handle)
+	vh.valueLen = uint32(valLen)
+	if r.vbiBlock == nil {
+		ch, err := r.bpOpen.readBlockForVBR(r.vbih.h, r.stats)
+		if err != nil {
+			return nil, false, err
+		}
+		r.vbiCache = ch
+		r.vbiBlock = ch.Get()
+	}
+	if r.valueBlock == nil || r.valueBlockNum != vh.blockNum {
+		vbh, err := r.getBlockHandle(vh.blockNum)
+		if err != nil {
+			return nil, false, err
+		}
+		vbCacheHandle, err := r.bpOpen.readBlockForVBR(vbh, r.stats)
+		if err != nil {
+			return nil, false, err
+		}
+		r.valueBlockNum = vh.blockNum
+		r.valueCache.Release()
+		r.valueCache = vbCacheHandle
+		r.valueBlock = vbCacheHandle.Get()
+		r.valueBlockPtr = unsafe.Pointer(&r.valueBlock[0])
+	}
+	return r.valueBlock[vh.offsetInBlock : vh.offsetInBlock+vh.valueLen], false, nil
+}
+
+func (r *valueBlockReader) getBlockHandle(blockNum uint32) (BlockHandle, error) {
+	indexEntryLen :=
+		int(r.vbih.blockNumByteLength + r.vbih.blockOffsetByteLength + r.vbih.blockLengthByteLength)
+	offsetInIndex := indexEntryLen * int(blockNum)
+	if len(r.vbiBlock) < offsetInIndex+indexEntryLen {
+		return BlockHandle{}, errors.Errorf(
+			"cannot read at offset %d and length %d from block of length %d",
+			offsetInIndex, indexEntryLen, len(r.vbiBlock))
+	}
+	b := r.vbiBlock[offsetInIndex : offsetInIndex+indexEntryLen]
+	n := int(r.vbih.blockNumByteLength)
+	bn := littleEndianGet(b, n)
+	if uint32(bn) != blockNum {
+		return BlockHandle{},
+			errors.Errorf("expected block num %d but found %d", blockNum, bn)
+	}
+	b = b[n:]
+	n = int(r.vbih.blockOffsetByteLength)
+	blockOffset := littleEndianGet(b, n)
+	b = b[n:]
+	n = int(r.vbih.blockLengthByteLength)
+	blockLen := littleEndianGet(b, n)
+	return BlockHandle{Offset: blockOffset, Length: blockLen}, nil
 }

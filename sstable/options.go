@@ -222,8 +222,8 @@ type WriterOptions struct {
 	// Writer client goroutine.
 	Parallelism bool
 
-	// EnableValueBlocks mirrors Options.Experimental.EnableValueBlocks. Must
-	// be false if the TableFormat is < TableFormatPebblev3.
+	// EnableValueBlocks mirrors Options.Experimental.EnableValueBlocks.
+	// INVARIANT: TableFormat < TableFormatPebblev3 => !EnableValueBlocks
 	EnableValueBlocks bool
 
 	// ShortAttributeExtractor mirrors

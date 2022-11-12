@@ -1547,7 +1547,6 @@ func (o *Options) MakeWriterOptions(level int, format sstable.TableFormat) sstab
 		writerOpts.BlockPropertyCollectors = o.BlockPropertyCollectors
 	}
 	if format >= sstable.TableFormatPebblev3 {
-		writerOpts.EnableValueBlocks = o.Experimental.EnableValueBlocks
 		writerOpts.ShortAttributeExtractor = o.Experimental.ShortAttributeExtractor
 		writerOpts.RequiredInPlaceValueBound = o.Experimental.RequiredInPlaceValueBound
 	}

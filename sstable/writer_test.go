@@ -25,34 +25,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func testWriterParallelism(t *testing.T, parallelism bool) {
+	for _, format := range []TableFormat{TableFormatPebblev2, TableFormatPebblev3} {
+		tdFile := "testdata/writer"
+		if format == TableFormatPebblev3 {
+			tdFile = "testdata/writer_v3"
+		}
+		t.Run(format.String(), func(t *testing.T) { runDataDriven(t, tdFile, format, parallelism) })
+	}
+}
 func TestWriter(t *testing.T) {
-	runDataDriven(t, "testdata/writer", false)
+	testWriterParallelism(t, false)
+}
+
+func testRewriterParallelism(t *testing.T, parallelism bool) {
+	for _, format := range []TableFormat{TableFormatPebblev2, TableFormatPebblev3} {
+		tdFile := "testdata/rewriter"
+		if format == TableFormatPebblev3 {
+			tdFile = "testdata/rewriter_v3"
+		}
+		t.Run(format.String(), func(t *testing.T) { runDataDriven(t, tdFile, format, parallelism) })
+	}
 }
 
 func TestRewriter(t *testing.T) {
-	runDataDriven(t, "testdata/rewriter", false)
+	testRewriterParallelism(t, false)
 }
 
 func TestWriterParallel(t *testing.T) {
-	runDataDriven(t, "testdata/writer", true)
+	testWriterParallelism(t, true)
 }
 
 func TestRewriterParallel(t *testing.T) {
-	runDataDriven(t, "testdata/rewriter", true)
+	testRewriterParallelism(t, true)
 }
 
-func runDataDriven(t *testing.T, file string, parallelism bool) {
+func runDataDriven(t *testing.T, file string, tableFormat TableFormat, parallelism bool) {
 	var r *Reader
 	defer func() {
 		if r != nil {
 			require.NoError(t, r.Close())
 		}
 	}()
-	formatVersion := TableFormatMax
-	if rand.Intn(2) == 0 {
-		formatVersion = TableFormatPebblev2
-	}
-	t.Logf("table format %s", formatVersion.String())
 
 	format := func(m *WriterMetadata) string {
 		var b bytes.Buffer
@@ -79,7 +93,7 @@ func runDataDriven(t *testing.T, file string, parallelism bool) {
 			var meta *WriterMetadata
 			var err error
 			meta, r, err = runBuildCmd(td, &WriterOptions{
-				TableFormat: formatVersion,
+				TableFormat: tableFormat,
 				Parallelism: parallelism,
 			}, 0)
 			if err != nil {
@@ -95,7 +109,7 @@ func runDataDriven(t *testing.T, file string, parallelism bool) {
 			var meta *WriterMetadata
 			var err error
 			meta, r, err = runBuildRawCmd(td, &WriterOptions{
-				TableFormat: formatVersion,
+				TableFormat: tableFormat,
 			})
 			if err != nil {
 				return err.Error()
@@ -181,7 +195,7 @@ func runDataDriven(t *testing.T, file string, parallelism bool) {
 			var meta *WriterMetadata
 			var err error
 			meta, r, err = runRewriteCmd(td, r, WriterOptions{
-				TableFormat: formatVersion,
+				TableFormat: tableFormat,
 			})
 			if err != nil {
 				return err.Error()
@@ -252,7 +266,6 @@ func TestWriterWithValueBlocks(t *testing.T) {
 				Comparer:                  testkeys.Comparer,
 				TableFormat:               formatVersion,
 				Parallelism:               parallelism,
-				EnableValueBlocks:         true,
 				RequiredInPlaceValueBound: inPlaceValueBound,
 				ShortAttributeExtractor:   attributeExtractor,
 			}, 0)
@@ -262,10 +275,20 @@ func TestWriterWithValueBlocks(t *testing.T) {
 			return formatMeta(meta)
 
 		case "scan-raw":
-			// Raw scan does not fetch from value blocks, since we have not written
-			// the read path yet.
+			// Raw scan does not fetch from value blocks.
 			// TODO(sumeer): add a real scan.
 			origIter, err := r.NewIter(nil /* lower */, nil /* upper */)
+			forceIgnoreValueBlocks := func(i *singleLevelIterator) {
+				i.vbReader = nil
+				i.data.lazyValueHandling.vbr = nil
+				i.data.lazyValueHandling.hasValuePrefix = false
+			}
+			switch i := origIter.(type) {
+			case *twoLevelIterator:
+				forceIgnoreValueBlocks(&i.singleLevelIterator)
+			case *singleLevelIterator:
+				forceIgnoreValueBlocks(i)
+			}
 			if err != nil {
 				return err.Error()
 			}
@@ -280,8 +303,7 @@ func TestWriterWithValueBlocks(t *testing.T) {
 					setWithSamePrefix := setHasSamePrefix(prefix)
 					if isValueHandle(prefix) {
 						attribute := getShortAttribute(prefix)
-						vh, err := decodeValueHandle(v[1:])
-						require.NoError(t, err)
+						vh := decodeValueHandle(v[1:])
 						fmt.Fprintf(&buf, "%s:value-handle len %d block %d offset %d, att %d, same-pre %t\n",
 							iter.Key(), vh.valueLen, vh.blockNum, vh.offsetInBlock, attribute, setWithSamePrefix)
 					} else {

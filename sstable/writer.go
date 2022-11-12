@@ -2128,11 +2128,7 @@ func NewWriter(f writeCloseSyncer, o WriterOptions, extraOpts ...WriterOption) *
 			Format: o.Comparer.FormatKey,
 		},
 	}
-	if o.EnableValueBlocks {
-		if w.tableFormat < TableFormatPebblev3 {
-			w.err = errors.New("value blocks not supported at this table format version")
-			return w
-		}
+	if w.tableFormat == TableFormatPebblev3 {
 		w.shortAttributeExtractor = o.ShortAttributeExtractor
 		w.requiredInPlaceValueBound = o.RequiredInPlaceValueBound
 		w.valueBlockWriter = newValueBlockWriter(

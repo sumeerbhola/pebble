@@ -210,6 +210,7 @@ type singleLevelIterator struct {
 	// loading. It may not actually have loaded the block, due to an error or
 	// because it was considered irrelevant.
 	dataBH    BlockHandle
+	vbReader  *valueBlockReader
 	err       error
 	closeHook func(i Iterator) error
 	stats     *base.InternalIteratorStats
@@ -388,6 +389,7 @@ func (i *singleLevelIterator) init(
 	filterer *BlockPropertiesFilterer,
 	useFilter bool,
 	stats *base.InternalIteratorStats,
+	rp ReaderProvider,
 ) error {
 	if r.err != nil {
 		return r.err
@@ -411,6 +413,18 @@ func (i *singleLevelIterator) init(
 		return err
 	}
 	i.dataRS.size = initialReadaheadSize
+	if r.tableFormat == TableFormatPebblev3 {
+		if r.Properties.NumValueBlocks > 0 {
+			i.vbReader = &valueBlockReader{
+				bpOpen: i,
+				rp:     rp,
+				vbih:   r.valueBIH,
+				stats:  stats,
+			}
+			i.data.lazyValueHandling.vbr = i.vbReader
+		}
+		i.data.lazyValueHandling.hasValuePrefix = true
+	}
 	return nil
 }
 
@@ -525,6 +539,15 @@ func (i *singleLevelIterator) loadBlock(dir int8) loadBlockResult {
 	}
 	i.initBounds()
 	return loadBlockOK
+}
+
+// readBlockForVBR implements the blockProviderWhenOpen interface for use by
+// the valueBlockReader.
+// TODO: do something about read-ahead.
+func (i *singleLevelIterator) readBlockForVBR(
+	h BlockHandle, stats *base.InternalIteratorStats,
+) (cache.Handle, error) {
+	return i.reader.readBlock(h, nil /* transform */, nil /* raState */, stats)
 }
 
 // resolveMaybeExcluded is invoked when the block-property filterer has found
@@ -1572,6 +1595,7 @@ func (i *twoLevelIterator) init(
 	filterer *BlockPropertiesFilterer,
 	useFilter bool,
 	stats *base.InternalIteratorStats,
+	rp ReaderProvider,
 ) error {
 	if r.err != nil {
 		return r.err
@@ -1593,6 +1617,19 @@ func (i *twoLevelIterator) init(
 		// blockIter.Close releases topLevelIndexH and always returns a nil error
 		_ = i.topLevelIndex.Close()
 		return err
+	}
+	i.dataRS.size = initialReadaheadSize
+	if r.tableFormat == TableFormatPebblev3 {
+		if r.Properties.NumValueBlocks > 0 {
+			i.vbReader = &valueBlockReader{
+				bpOpen: i,
+				rp:     rp,
+				vbih:   r.valueBIH,
+				stats:  stats,
+			}
+			i.data.lazyValueHandling.vbr = i.vbReader
+		}
+		i.data.lazyValueHandling.hasValuePrefix = true
 	}
 	return nil
 }
@@ -2614,6 +2651,7 @@ type Reader struct {
 	rangeDelBH        BlockHandle
 	rangeKeyBH        BlockHandle
 	rangeDelTransform blockTransform
+	valueBIH          valueBlocksIndexHandle
 	propertiesBH      BlockHandle
 	metaIndexBH       BlockHandle
 	footerBH          BlockHandle
@@ -2659,13 +2697,14 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 	filterer *BlockPropertiesFilterer,
 	useFilterBlock bool,
 	stats *base.InternalIteratorStats,
+	rp ReaderProvider,
 ) (Iterator, error) {
 	// NB: pebble.tableCache wraps the returned iterator with one which performs
 	// reference counting on the Reader, preventing the Reader from being closed
 	// until the final iterator closes.
 	if r.Properties.IndexType == twoLevelIndex {
 		i := twoLevelIterPool.Get().(*twoLevelIterator)
-		err := i.init(r, lower, upper, filterer, useFilterBlock, stats)
+		err := i.init(r, lower, upper, filterer, useFilterBlock, stats, rp)
 		if err != nil {
 			return nil, err
 		}
@@ -2673,7 +2712,7 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 	}
 
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
-	err := i.init(r, lower, upper, filterer, useFilterBlock, stats)
+	err := i.init(r, lower, upper, filterer, useFilterBlock, stats, rp)
 	if err != nil {
 		return nil, err
 	}
@@ -2681,18 +2720,23 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 }
 
 // NewIter returns an iterator for the contents of the table. If an error
-// occurs, NewIter cleans up after itself and returns a nil iterator.
+// occurs, NewIter cleans up after itself and returns a nil iterator. NewIter
+// must only be used when the Reader is guaranteed to outlive any LazyValues
+// returned from the iter.
 func (r *Reader) NewIter(lower, upper []byte) (Iterator, error) {
-	return r.NewIterWithBlockPropertyFilters(lower, upper, nil, true /* useFilterBlock */, nil /* stats */)
+	return r.NewIterWithBlockPropertyFilters(
+		lower, upper, nil, true /* useFilterBlock */, nil, /* stats */
+		TrivialReaderProvider{Reader: r})
 }
 
 // NewCompactionIter returns an iterator similar to NewIter but it also increments
 // the number of bytes iterated. If an error occurs, NewCompactionIter cleans up
 // after itself and returns a nil iterator.
-func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
+func (r *Reader) NewCompactionIter(bytesIterated *uint64, rp ReaderProvider) (Iterator, error) {
 	if r.Properties.IndexType == twoLevelIndex {
 		i := twoLevelIterPool.Get().(*twoLevelIterator)
-		err := i.init(r, nil /* lower */, nil /* upper */, nil, false /* useFilter */, nil /* stats */)
+		err := i.init(
+			r, nil /* lower */, nil /* upper */, nil, false /* useFilter */, nil /* stats */, rp)
 		if err != nil {
 			return nil, err
 		}
@@ -2703,7 +2747,8 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 		}, nil
 	}
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
-	err := i.init(r, nil /* lower */, nil /* upper */, nil, false /* useFilter */, nil /* stats */)
+	err := i.init(
+		r, nil /* lower */, nil /* upper */, nil, false /* useFilter */, nil /* stats */, rp)
 	if err != nil {
 		return nil, err
 	}
@@ -2797,6 +2842,15 @@ func checkChecksum(
 			errors.Safe(fileNum), errors.Safe(bh.Offset), errors.Safe(bh.Length))
 	}
 	return nil
+}
+
+// ReadBlockForBlockProvider is for helping the tableCache implement
+// BlockProviderWhenClosed.
+func (r *Reader) ReadBlockForBlockProvider(
+	bh BlockHandle, stats *base.InternalIteratorStats,
+) (cache.Handle, error) {
+	return r.readBlock(
+		bh, nil /* transform */, nil /* raState */, stats)
 }
 
 // readBlock reads and decompresses a block from disk into memory.
@@ -2967,11 +3021,23 @@ func (r *Reader) readMetaindex(metaindexBH BlockHandle) error {
 
 	meta := map[string]BlockHandle{}
 	for valid := i.First(); valid; valid = i.Next() {
-		bh, n := decodeBlockHandle(i.Value())
-		if n == 0 {
-			return base.CorruptionErrorf("pebble/table: invalid table (bad filter block handle)")
+		value := i.Value()
+		if bytes.Equal(i.Key().UserKey, []byte(metaValueIndexName)) {
+			vbih, n, err := decodeValueBlocksIndexHandle(i.Value())
+			if err != nil {
+				return err
+			}
+			if n == 0 || n != len(value) {
+				return base.CorruptionErrorf("pebble/table: invalid table (bad value blocks index handle)")
+			}
+			r.valueBIH = vbih
+		} else {
+			bh, n := decodeBlockHandle(value)
+			if n == 0 || n != len(value) {
+				return base.CorruptionErrorf("pebble/table: invalid table (bad block handle)")
+			}
+			meta[string(i.Key().UserKey)] = bh
 		}
-		meta[string(i.Key().UserKey)] = bh
 	}
 	if err := i.Close(); err != nil {
 		return err
@@ -3616,15 +3682,29 @@ func (l *Layout) Describe(
 			iter, _ := newRawBlockIter(r.Compare, h.Get())
 			for valid := iter.First(); valid; valid = iter.Next() {
 				value := iter.Value()
-				bh, n := decodeBlockHandle(value)
+				var bh BlockHandle
+				var n int
+				var vbih valueBlocksIndexHandle
+				isValueBlocksIndexHandle := false
+				if bytes.Equal(iter.Key().UserKey, []byte(metaValueIndexName)) {
+					vbih, n, err = decodeValueBlocksIndexHandle(value)
+					bh = vbih.h
+					isValueBlocksIndexHandle = true
+				} else {
+					bh, n = decodeBlockHandle(value)
+				}
 				if n == 0 || n != len(value) {
 					fmt.Fprintf(w, "%10d    [err: %s]\n", b.Offset+uint64(iter.offset), err)
 					continue
 				}
-
-				fmt.Fprintf(w, "%10d    %s block:%d/%d",
+				var vbihStr string
+				if isValueBlocksIndexHandle {
+					vbihStr = fmt.Sprintf(" value-blocks-index-lengths: %d(num), %d(offset), %d(length)",
+						vbih.blockNumByteLength, vbih.blockOffsetByteLength, vbih.blockLengthByteLength)
+				}
+				fmt.Fprintf(w, "%10d    %s block:%d/%d%s",
 					b.Offset+uint64(iter.offset), iter.Key().UserKey,
-					bh.Offset, bh.Length)
+					bh.Offset, bh.Length, vbihStr)
 				formatIsRestart(iter.data, iter.restarts, iter.numRestarts, iter.offset)
 			}
 			formatRestarts(iter.data, iter.restarts, iter.numRestarts)

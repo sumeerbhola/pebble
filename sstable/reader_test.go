@@ -260,15 +260,20 @@ func TestReaderStats(t *testing.T) {
 }
 
 func TestReaderWithBlockPropertyFilter(t *testing.T) {
-	writerOpt := WriterOptions{
-		BlockSize:               1,
-		IndexBlockSize:          40,
-		Comparer:                testkeys.Comparer,
-		TableFormat:             TableFormatMax,
-		BlockPropertyCollectors: []func() BlockPropertyCollector{NewTestKeysBlockPropertyCollector},
+	for _, format := range []TableFormat{TableFormatPebblev2, TableFormatPebblev3} {
+		writerOpt := WriterOptions{
+			BlockSize:               1,
+			IndexBlockSize:          40,
+			Comparer:                testkeys.Comparer,
+			TableFormat:             format,
+			BlockPropertyCollectors: []func() BlockPropertyCollector{NewTestKeysBlockPropertyCollector},
+		}
+		tdFile := "testdata/reader_bpf"
+		if format == TableFormatPebblev3 {
+			tdFile = "testdata/reader_bpf_v3"
+		}
+		runTestReader(t, writerOpt, tdFile, nil /* Reader */, 0, true)
 	}
-	runTestReader(
-		t, writerOpt, "testdata/reader_bpf", nil /* Reader */, 0, true)
 }
 
 func TestInjectedErrors(t *testing.T) {
@@ -442,6 +447,7 @@ func runTestReader(
 					filterer,
 					true, /* use filter block */
 					&stats,
+					TrivialReaderProvider{Reader: r},
 				)
 				if err != nil {
 					return err.Error()
@@ -576,7 +582,7 @@ func testBytesIteratedWithCompression(
 			for _, numEntries := range []uint64{0, 1, maxNumEntries[i]} {
 				r := buildTestTable(t, numEntries, blockSize, indexBlockSize, compression)
 				var bytesIterated, prevIterated uint64
-				citer, err := r.NewCompactionIter(&bytesIterated)
+				citer, err := r.NewCompactionIter(&bytesIterated, TrivialReaderProvider{Reader: r})
 				require.NoError(t, err)
 
 				for key, _ := citer.First(); key != nil; key, _ = citer.Next() {
@@ -626,7 +632,7 @@ func TestCompactionIteratorSetupForCompaction(t *testing.T) {
 			for _, numEntries := range []uint64{0, 1, 1e5} {
 				r := buildTestTable(t, numEntries, blockSize, indexBlockSize, DefaultCompression)
 				var bytesIterated uint64
-				citer, err := r.NewCompactionIter(&bytesIterated)
+				citer, err := r.NewCompactionIter(&bytesIterated, TrivialReaderProvider{Reader: r})
 				require.NoError(t, err)
 				switch i := citer.(type) {
 				case *compactionIterator:
@@ -1098,6 +1104,7 @@ var basicBenchmarks = []struct {
 			BlockRestartInterval: 16,
 			FilterPolicy:         nil,
 			Compression:          SnappyCompression,
+			TableFormat:          TableFormatPebblev2,
 		},
 	},
 	{
@@ -1107,6 +1114,7 @@ var basicBenchmarks = []struct {
 			BlockRestartInterval: 16,
 			FilterPolicy:         nil,
 			Compression:          ZstdCompression,
+			TableFormat:          TableFormatPebblev2,
 		},
 	},
 }
