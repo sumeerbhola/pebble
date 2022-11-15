@@ -1104,7 +1104,7 @@ var basicBenchmarks = []struct {
 			BlockRestartInterval: 16,
 			FilterPolicy:         nil,
 			Compression:          SnappyCompression,
-			TableFormat:          TableFormatPebblev2,
+			TableFormat:          TableFormatPebblev3,
 		},
 	},
 	{
@@ -1114,7 +1114,7 @@ var basicBenchmarks = []struct {
 			BlockRestartInterval: 16,
 			FilterPolicy:         nil,
 			Compression:          ZstdCompression,
-			TableFormat:          TableFormatPebblev2,
+			TableFormat:          TableFormatPebblev3,
 		},
 	},
 }

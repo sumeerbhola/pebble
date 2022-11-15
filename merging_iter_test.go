@@ -289,6 +289,7 @@ func buildMergingIterTables(
 			BlockRestartInterval: restartInterval,
 			BlockSize:            blockSize,
 			Compression:          NoCompression,
+			TableFormat: sstable.TableFormatPebblev3,
 		})
 	}
 
@@ -487,6 +488,7 @@ func buildLevelsForMergingIterSeqSeek(
 				BlockRestartInterval: restartInterval,
 				BlockSize:            blockSize,
 				Compression:          NoCompression,
+				TableFormat: sstable.TableFormatPebblev3,
 			}
 			if writeBloomFilters {
 				writerOptions.FilterPolicy = filterPolicy

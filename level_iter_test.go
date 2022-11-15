@@ -453,6 +453,7 @@ func buildLevelIterTables(
 			BlockRestartInterval: restartInterval,
 			BlockSize:            blockSize,
 			Compression:          NoCompression,
+			TableFormat: sstable.TableFormatPebblev3,
 		})
 	}
 
