@@ -785,6 +785,7 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 		return
 	}
 
+	dbSizeWithoutL0 := dbSize
 	dbSize += p.levelSizes[0]
 	bottomLevelSize := dbSize - dbSize/int64(p.opts.Experimental.LevelMultiplier)
 
@@ -811,6 +812,7 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 	p.estimatedMaxWAmp = float64(numLevels-p.baseLevel) * (smoothedLevelMultiplier + 1)
 
 	levelSize := float64(baseBytesMax)
+	var sumMaxSizeWithoutL0 int64
 	for level := p.baseLevel; level < numLevels; level++ {
 		if level > p.baseLevel && levelSize > 0 {
 			levelSize *= smoothedLevelMultiplier
@@ -822,6 +824,13 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 			p.levelMaxBytes[level] = math.MaxInt64
 		} else {
 			p.levelMaxBytes[level] = int64(roundedLevelSize)
+			sumMaxSizeWithoutL0 += p.levelMaxBytes[level]
+		}
+	}
+	if sumMaxSizeWithoutL0 > dbSizeWithoutL0 {
+		bottomMaxSize := p.levelMaxBytes[numLevels-1] - (sumMaxSizeWithoutL0-dbSizeWithoutL0)
+		if bottomMaxSize > 0 {
+			p.levelMaxBytes[numLevels-1] = bottomMaxSize
 		}
 	}
 }
