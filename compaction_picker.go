@@ -739,6 +739,8 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 	//    level sizes are roughly equal and thus there is a significant fraction
 	//    of data outside of the largest level.
 	//
+	// 2 is no longer true:
+	//
 	// 2. Not adjusting the size of Lbase based on L0. RocksDB computes
 	//    baseBytesMax as the maximum of the configured LBaseMaxBytes and the
 	//    size of L0. This is problematic because baseBytesMax is used to compute
@@ -795,12 +797,23 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 
 	// Compute base level (where L0 data is compacted to).
 	baseBytesMax := p.opts.LBaseMaxBytes
+	// Adjust the baseBytesMax if L0 is huge. This allows for lower write amp
+	// during write overload, and when the overload goes away L0 will naturally
+	// shrink due to compactions and this conditional will no longer be true.
+	if p.levelSizes[0] > baseBytesMax {
+		baseBytesMax = p.levelSizes[0]
+	}
 	p.baseLevel = firstNonEmptyLevel
 	for p.baseLevel > 1 && curLevelSize > baseBytesMax {
 		p.baseLevel--
 		curLevelSize = int64(float64(curLevelSize) / float64(p.opts.Experimental.LevelMultiplier))
 	}
 
+	// When baseBytesMax is bumped up due to L0 size, smoothedLevelMultiplier
+	// will decrease below 10. This reduces p.estimatedMaxWAmp. The reason we
+	// don't want a lower smoothedLevelMultiplier in steady-state is that a
+	// lower multiplier means more levels to accommodate the same data, which
+	// increased read-amp. But during write overload this is ok.
 	smoothedLevelMultiplier := 1.0
 	if p.baseLevel < numLevels-1 {
 		smoothedLevelMultiplier = math.Pow(
@@ -866,16 +879,41 @@ func (p *compactionPickerByScore) calculateScores(
 		scores[i].level = i
 		scores[i].outputLevel = i + 1
 	}
-	scores[0] = p.calculateL0Score(inProgressCompactions)
+	var l0LevelSize int64
+	scores[0], l0LevelSize = p.calculateL0ScoreAndSize(inProgressCompactions)
 
 	sizeAdjust := calculateSizeAdjust(
 		inProgressCompactions,
 		p.opts.Experimental.PointTombstoneWeight,
 	)
+
+	lBaseToL0SizeRatio := 0.0
+	baseLevel := -1
+	maxScore := scores[0].score
 	for level := 1; level < numLevels; level++ {
 		levelSize := int64(levelCompensatedSize(p.vers.Levels[level])) + sizeAdjust[level]
 		scores[level].score = float64(levelSize) / float64(p.levelMaxBytes[level])
+		if baseLevel == -1 && levelSize > 0 {
+			baseLevel = level
+			if l0LevelSize > 0 {
+				lBaseToL0SizeRatio = float64(levelSize)/float64(l0LevelSize)
+			}
+		}
 		scores[level].origScore = scores[level].score
+		if scores[level].score > maxScore {
+			maxScore = scores[level].score
+		}
+	}
+	// No risk of Li+1/Li size ratio becoming too high for Li > 0 since all
+	// these scores are based on current size and if the ratio is too high then
+	// the score for Li+1 will also be higher than the score for Li. Ratio of
+	// Lbase/L0 can become too high if we keep adding data to Lbase and don't do
+	// enough compactions out of Lbase, since the score of L0 is not based on
+	// byte size. Note that when L0 is empty, lBaseToL0SizeRatio will be high,
+	// so we want to exclude this low-load situation where L0 is not
+	// substantial.
+	if scores[0].score > 2 && l0LevelSize > (200 << 20) && lBaseToL0SizeRatio > 5 {
+		scores[baseLevel].score = maxScore+1
 	}
 
 	// Adjust each level's score by the score of the next level. If the next
@@ -899,6 +937,7 @@ func (p *compactionPickerByScore) calculateScores(
 	//   L4        3.4        6.7      3.1 G      467 M
 	//   L5        3.4        2.0      6.6 G      3.3 G
 	//   L6        0.6        0.6       14 G       24 G
+	/*
 	var prevLevel int
 	for level := p.baseLevel; level < numLevels; level++ {
 		if scores[prevLevel].score >= 1 {
@@ -914,19 +953,27 @@ func (p *compactionPickerByScore) calculateScores(
 		prevLevel = level
 	}
 
+	 */
+
 	sort.Sort(sortCompactionLevelsDecreasingScore(scores[:]))
 	return scores
 }
 
-func (p *compactionPickerByScore) calculateL0Score(
+func (p *compactionPickerByScore) calculateL0ScoreAndSize(
 	inProgressCompactions []compactionInfo,
-) candidateLevelInfo {
+) (candidateLevelInfo, int64) {
 	var info candidateLevelInfo
 	info.outputLevel = p.baseLevel
 
+	l0LevelSize := p.levelSizes[0]
 	// If L0Sublevels are present, use the sublevel count to calculate the
 	// score. The base vs intra-L0 compaction determination happens in pickAuto,
 	// not here.
+	//
+	// The multiplier of 2 means that with CockroachDB's
+	// L0CompactionThreshold=2, we will clear out of all of L0 when there is
+	// spare compaction capacity. This was discussed in
+	// https://cockroachlabs.slack.com/archives/CAC6K3SLU/p1594065186164300?thread_ts=1594044598.162200&cid=CAC6K3SLU
 	info.score = float64(2*p.vers.L0Sublevels.MaxDepthAfterOngoingCompactions()) /
 		float64(p.opts.L0CompactionThreshold)
 
@@ -943,6 +990,11 @@ func (p *compactionPickerByScore) calculateL0Score(
 		for _, cl := range c.inputs {
 			if cl.level == 0 {
 				noncompactingFiles -= cl.files.Len()
+				if c.outputLevel != 0 {
+					cl.files.Each(func (meta *fileMetadata) {
+						l0LevelSize -= int64(meta.Size)
+					})
+				}
 			}
 		}
 	}
@@ -950,7 +1002,7 @@ func (p *compactionPickerByScore) calculateL0Score(
 	if info.score < fileScore {
 		info.score = fileScore
 	}
-	return info
+	return info, l0LevelSize
 }
 
 func (p *compactionPickerByScore) pickFile(

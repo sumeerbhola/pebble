@@ -54,7 +54,7 @@ base: 5
 
 queue
 ----
-L5->L6: 2.2
+L5->L6: 2.0
 
 # Smoothing multiplier is
 # `(size(Lbottom)/size(Lbase))^(Lbottom-Lbase) = (30/1)^(1/(6-4)) = 30^(1/2)`
@@ -87,7 +87,7 @@ base: 4
 
 queue
 ----
-L4->L5: 10.0
+L4->L5: 2.0
 
 init 1
 4: 1
@@ -101,7 +101,7 @@ base: 4
 
 queue
 ----
-L4->L5: 5.0
+L4->L5: 1.0
 
 init 1
 4: 1
@@ -129,7 +129,7 @@ base: 4
 
 queue
 ----
-L4->L5: 1.8
+L4->L5: 2.0
 
 init 1
 0: 4
@@ -141,7 +141,7 @@ base: 6
 
 queue
 ----
-L0->L6: 200.0
+L0->L6: 2.0
 
 init 1
 0: 5
@@ -153,7 +153,7 @@ base: 6
 
 queue
 ----
-L0->L6: 250.0
+L0->L6: 2.5
 
 init 1
 0: 5
@@ -167,13 +167,14 @@ base: 5
 
 queue
 ----
-L5->L6: 3.2
+L0->L5: 2.5
+L5->L6: 1.4
 
 pick
 ----
-L5->L6: 3.2
+L0->L5: 2.5
 
-pick ongoing=(5,6)
+pick ongoing=(0,5)
 ----
 no compaction
 
@@ -190,16 +191,20 @@ base: 4
 
 queue
 ----
-L4->L5: 10.0
-L4->L5: 7.7
+L0->L4: 5.0
+L4->L5: 2.0
+L4->L5: 1.9
+L4->L5: 1.8
+L4->L5: 1.7
+L4->L5: 1.6
 
 pick ongoing=(5,6)
 ----
-no compaction
+L0->L4: 5.0
 
 pick ongoing=(0,4)
 ----
-L5->L6: 3.3
+no compaction
 
 pick ongoing=(0,0,0,4)
 ----
@@ -220,15 +225,15 @@ init 1
 
 init_cp ongoing=(0,5)
 ----
-base: 4
+base: 5
 
 queue
 ----
-L0->L4: 1000.0
+L0->L5: 10.0
 
 pick
 ----
-L0->L4: 1000.0
+L0->L5: 10.0
 
 pick ongoing=(0,4)
 ----
@@ -249,7 +254,7 @@ base: 4
 
 queue
 ----
-L0->L4: 1000.0
+L0->L4: 10.0
 
 pick ongoing=(0,4,4,5)
 ----
@@ -257,7 +262,7 @@ no compaction
 
 pick ongoing=(4,5)
 ----
-L0->L4: 1000.0
+L0->L4: 10.0
 
 # Verify we can start concurrent Ln->Ln+1 compactions given sufficient
 # priority.
@@ -273,11 +278,11 @@ base: 5
 
 queue
 ----
-L5->L6: 5.2
+L5->L6: 4.0
 
 pick
 ----
-L5->L6: 5.2
+L5->L6: 4.0
 
 pick ongoing=(5,6)
 ----
@@ -298,8 +303,12 @@ base: 5
 
 queue
 ----
-L5->L6: 9.2
-L5->L6: 6.9
+L0->L5: 5.0
+L5->L6: 2.0
+L5->L6: 1.9
+L5->L6: 1.8
+L5->L6: 1.7
+L5->L6: 1.6
 
 pick_manual level=0 start=0 end=12
 ----
@@ -307,7 +316,7 @@ L0->L5, retryLater = false
 
 pick
 ----
-L5->L6: 9.2
+L0->L5: 5.0
 
 # Assume the above two compactions (one manual L0 -> L5 and one automatic
 # L5 -> L6) have run, and Lbase = L6 now, but the manual compaction code is
