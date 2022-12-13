@@ -168,6 +168,7 @@ base: 5
 queue
 ----
 L5->L6: 3.2
+L0->L0: 2.5
 
 pick
 ----
@@ -175,7 +176,7 @@ L5->L6: 3.2
 
 pick ongoing=(5,6)
 ----
-no compaction
+L0->L0: 2.5
 
 init 1
 0: 10
@@ -192,6 +193,10 @@ queue
 ----
 L4->L5: 10.0
 L4->L5: 7.7
+L4->L5: 6.0
+L5->L6: 5.0
+L5->L6: 4.0
+L5->L6: 3.2
 
 pick ongoing=(5,6)
 ----
@@ -203,7 +208,7 @@ L5->L6: 3.3
 
 pick ongoing=(0,0,0,4)
 ----
-no compaction
+L5->L6: 3.3
 
 init_cp
 ----
@@ -300,6 +305,9 @@ queue
 ----
 L5->L6: 9.2
 L5->L6: 6.9
+L5->L6: 5.3
+L5->L6: 4.0
+L0->L0: 4.2
 
 pick_manual level=0 start=0 end=12
 ----
