@@ -26,8 +26,14 @@ type compactionEnv struct {
 	readCompactionEnv       readCompactionEnv
 }
 
+type scoresEtc struct {
+	score float64
+	originalScore float64
+	levelMaxBytes int64
+}
+
 type compactionPicker interface {
-	getScores([]compactionInfo) [numLevels]float64
+	getScores([]compactionInfo) [numLevels]scoresEtc
 	getBaseLevel() int
 	getEstimatedMaxWAmp() float64
 	estimatedCompactionDebt(l0ExtraSize uint64) uint64
@@ -671,10 +677,12 @@ type compactionPickerByScore struct {
 
 var _ compactionPicker = &compactionPickerByScore{}
 
-func (p *compactionPickerByScore) getScores(inProgress []compactionInfo) [numLevels]float64 {
-	var scores [numLevels]float64
+func (p *compactionPickerByScore) getScores(inProgress []compactionInfo) [numLevels]scoresEtc {
+	var scores [numLevels]scoresEtc
 	for _, info := range p.calculateScores(inProgress) {
-		scores[info.level] = info.score
+		scores[info.level].score = info.score
+		scores[info.level].originalScore = info.origScore
+		scores[info.level].levelMaxBytes = p.levelMaxBytes[info.level]
 	}
 	return scores
 }
@@ -739,6 +747,8 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 	//    level sizes are roughly equal and thus there is a significant fraction
 	//    of data outside of the largest level.
 	//
+	// 2 is no longer true:
+	//
 	// 2. Not adjusting the size of Lbase based on L0. RocksDB computes
 	//    baseBytesMax as the maximum of the configured LBaseMaxBytes and the
 	//    size of L0. This is problematic because baseBytesMax is used to compute
@@ -795,17 +805,36 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 
 	// Compute base level (where L0 data is compacted to).
 	baseBytesMax := p.opts.LBaseMaxBytes
+	// Adjust the baseBytesMax if L0 is huge. This allows for lower write amp
+	// during write overload, and when the overload goes away L0 will naturally
+	// shrink due to compactions and this conditional will no longer be true.
+	if p.levelSizes[0] > baseBytesMax {
+		baseBytesMax = p.levelSizes[0]
+	}
 	p.baseLevel = firstNonEmptyLevel
 	for p.baseLevel > 1 && curLevelSize > baseBytesMax {
 		p.baseLevel--
 		curLevelSize = int64(float64(curLevelSize) / float64(p.opts.Experimental.LevelMultiplier))
 	}
 
+	// If baseBytesMax is bumped up due to L0 size, smoothedLevelMultiplier
+	// will decrease. This reduces p.estimatedMaxWAmp.
 	smoothedLevelMultiplier := 1.0
 	if p.baseLevel < numLevels-1 {
 		smoothedLevelMultiplier = math.Pow(
 			float64(bottomLevelSize)/float64(baseBytesMax),
 			1.0/float64(numLevels-p.baseLevel-1))
+		// Since the multiplier between other levels is smoothedLevelMultiplier,
+		// it is fair for it to be used as the multiplier from L0 => Lbase. Then
+		// we pay this higher multiplier once and by increasing Lbase we can
+		// shrink the multiplier further from Lbase to L6.
+		baseBytesMax2 := int64(float64(p.levelSizes[0])*smoothedLevelMultiplier/2)
+		if baseBytesMax2 > baseBytesMax {
+			baseBytesMax = baseBytesMax2
+			smoothedLevelMultiplier = math.Pow(
+				float64(bottomLevelSize)/float64(baseBytesMax),
+				1.0/float64(numLevels-p.baseLevel-1))
+		}
 	}
 
 	p.estimatedMaxWAmp = float64(numLevels-p.baseLevel) * (smoothedLevelMultiplier + 1)
@@ -872,6 +901,7 @@ func (p *compactionPickerByScore) calculateScores(
 		inProgressCompactions,
 		p.opts.Experimental.PointTombstoneWeight,
 	)
+
 	for level := 1; level < numLevels; level++ {
 		levelSize := int64(levelCompensatedSize(p.vers.Levels[level])) + sizeAdjust[level]
 		scores[level].score = float64(levelSize) / float64(p.levelMaxBytes[level])
@@ -927,6 +957,11 @@ func (p *compactionPickerByScore) calculateL0Score(
 	// If L0Sublevels are present, use the sublevel count to calculate the
 	// score. The base vs intra-L0 compaction determination happens in pickAuto,
 	// not here.
+	//
+	// The multiplier of 2 means that with CockroachDB's
+	// L0CompactionThreshold=2, we will clear out of all of L0 when there is
+	// spare compaction capacity. This was discussed in
+	// https://cockroachlabs.slack.com/archives/CAC6K3SLU/p1594065186164300?thread_ts=1594044598.162200&cid=CAC6K3SLU
 	info.score = float64(2*p.vers.L0Sublevels.MaxDepthAfterOngoingCompactions()) /
 		float64(p.opts.L0CompactionThreshold)
 

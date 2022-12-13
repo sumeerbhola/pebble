@@ -49,6 +49,8 @@ type LevelMetrics struct {
 	Size int64
 	// The level's compaction score.
 	Score float64
+	OriginalScore float64
+	LevelMaxBytes int64
 	// The number of incoming bytes from other levels read during
 	// compactions. This excludes bytes moved and bytes ingested. For L0 this is
 	// the bytes written to the WAL.
@@ -108,7 +110,7 @@ func (m *LevelMetrics) WriteAmp() float64 {
 // format generates a string of the receiver's metrics, formatting it into the
 // supplied buffer.
 func (m *LevelMetrics) format(w redact.SafePrinter, score redact.SafeValue) {
-	w.Printf("%9d %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7d %7.1f\n",
+	w.Printf("%9d %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7d %7.1f %0.3f %7s\n",
 		redact.Safe(m.NumFiles),
 		humanize.IEC.Int64(m.Size),
 		score,
@@ -121,7 +123,10 @@ func (m *LevelMetrics) format(w redact.SafePrinter, score redact.SafeValue) {
 		humanize.SI.Uint64(m.TablesFlushed+m.TablesCompacted),
 		humanize.IEC.Uint64(m.BytesRead),
 		redact.Safe(m.Sublevels),
-		redact.Safe(m.WriteAmp()))
+		redact.Safe(m.WriteAmp()),
+		redact.Safe(m.OriginalScore),
+		humanize.IEC.Int64(m.LevelMaxBytes),
+		)
 }
 
 // Metrics holds metrics for various subsystems of the DB such as the Cache,
@@ -378,7 +383,7 @@ func (m *Metrics) SafeFormat(w redact.SafePrinter, _ rune) {
 
 	var total LevelMetrics
 	w.SafeString("__level_____count____size___score______in__ingest(sz_cnt)" +
-		"____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp\n")
+		"____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp_osc_max\n")
 	m.formatWAL(w)
 	for level := 0; level < numLevels; level++ {
 		l := &m.Levels[level]

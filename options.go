@@ -871,7 +871,7 @@ func (o *Options) EnsureDefaults() *Options {
 		o.Comparer = DefaultComparer
 	}
 	if o.Experimental.L0CompactionConcurrency <= 0 {
-		o.Experimental.L0CompactionConcurrency = 10
+		o.Experimental.L0CompactionConcurrency = 2
 	}
 	if o.Experimental.CompactionDebtConcurrency <= 0 {
 		o.Experimental.CompactionDebtConcurrency = 1 << 30 // 1 GB
