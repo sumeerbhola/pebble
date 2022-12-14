@@ -1049,7 +1049,7 @@ L6
 compact a-z
 ----
 6:
-  000010:[b#0,SET-b#0,SET]
+  000009:[b#0,SET-b#0,SET]
 
 iter
 first

@@ -2355,6 +2355,8 @@ func (d *DB) runCompaction(
 		BytesIn:   c.startLevel.files.SizeSum(),
 		BytesRead: c.outputLevel.files.SizeSum(),
 	}
+	startLevelBytes := outputMetrics.BytesIn
+	outputLevelBytes := outputMetrics.BytesRead
 	if len(c.extraLevels) > 0 {
 		outputMetrics.BytesIn += c.extraLevels[0].files.SizeSum()
 	}
@@ -2368,6 +2370,9 @@ func (d *DB) runCompaction(
 	}
 	if len(c.extraLevels) > 0 {
 		c.metrics[c.extraLevels[0].level] = &LevelMetrics{}
+		outputMetrics.BytesInML = outputMetrics.BytesIn
+		outputMetrics.BytesInTopML = startLevelBytes
+		outputMetrics.BytesExistingML = outputLevelBytes
 	}
 
 	// The table is typically written at the maximum allowable format implied by

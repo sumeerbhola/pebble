@@ -31,16 +31,16 @@ lsm
 
 metrics
 ----
-__level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp
+__level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp_ml:in_inTop_inLow
     WAL         1     0 B       -     0 B       -       -       -       -     0 B       -       -       -     0.0
-      0         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      1         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      2         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      6         1   833 B       -     0 B   833 B       1     0 B       0     0 B       0     0 B       1     0.0
-  total         1   833 B       -   833 B   833 B       1     0 B       0   833 B       0     0 B       1     1.0
+      0         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      1         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      2         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0   0 B   0 B   0 B
+      6         1   833 B       -     0 B   833 B       1     0 B       0     0 B       0     0 B       1     0.0   0 B   0 B   0 B
+  total         1   833 B       -   833 B   833 B       1     0 B       0   833 B       0     0 B       1     1.0   0 B   0 B   0 B
   flush         0
 compact         0     0 B     0 B       0          (size == estimated-debt, score = in-progress-bytes, in = num-in-progress)
   ctype         0       0       0       0       0       0       0  (default, delete, elision, move, read, rewrite, multi-level)

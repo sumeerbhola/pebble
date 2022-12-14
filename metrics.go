@@ -78,6 +78,10 @@ type LevelMetrics struct {
 	TablesIngested uint64
 	// The number of sstables moved to this level by a "move" compaction.
 	TablesMoved uint64
+
+	BytesInML uint64
+	BytesInTopML uint64
+	BytesExistingML uint64
 }
 
 // Add updates the counter metrics for the level.
@@ -94,6 +98,10 @@ func (m *LevelMetrics) Add(u *LevelMetrics) {
 	m.TablesFlushed += u.TablesFlushed
 	m.TablesIngested += u.TablesIngested
 	m.TablesMoved += u.TablesMoved
+
+	m.BytesInML += u.BytesInML
+	m.BytesInTopML += u.BytesInTopML
+	m.BytesExistingML += u.BytesExistingML
 }
 
 // WriteAmp computes the write amplification for compactions at this
@@ -108,7 +116,7 @@ func (m *LevelMetrics) WriteAmp() float64 {
 // format generates a string of the receiver's metrics, formatting it into the
 // supplied buffer.
 func (m *LevelMetrics) format(w redact.SafePrinter, score redact.SafeValue) {
-	w.Printf("%9d %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7d %7.1f\n",
+	w.Printf("%9d %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7d %7.1f %5s %5s %5s\n",
 		redact.Safe(m.NumFiles),
 		humanize.IEC.Int64(m.Size),
 		score,
@@ -121,7 +129,10 @@ func (m *LevelMetrics) format(w redact.SafePrinter, score redact.SafeValue) {
 		humanize.SI.Uint64(m.TablesFlushed+m.TablesCompacted),
 		humanize.IEC.Uint64(m.BytesRead),
 		redact.Safe(m.Sublevels),
-		redact.Safe(m.WriteAmp()))
+		redact.Safe(m.WriteAmp()),
+		humanize.IEC.Uint64(m.BytesInML),
+		humanize.IEC.Uint64(m.BytesInTopML),
+		humanize.IEC.Uint64(m.BytesExistingML))
 }
 
 // Metrics holds metrics for various subsystems of the DB such as the Cache,
@@ -378,7 +389,7 @@ func (m *Metrics) SafeFormat(w redact.SafePrinter, _ rune) {
 
 	var total LevelMetrics
 	w.SafeString("__level_____count____size___score______in__ingest(sz_cnt)" +
-		"____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp\n")
+		"____move(sz_cnt)___write(sz_cnt)____read___r-amp___w-amp_ml:in_inTop_inLow\n")
 	m.formatWAL(w)
 	for level := 0; level < numLevels; level++ {
 		l := &m.Levels[level]

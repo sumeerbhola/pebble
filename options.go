@@ -994,6 +994,9 @@ func (o *Options) EnsureDefaults() *Options {
 	if o.Experimental.PointTombstoneWeight == 0 {
 		o.Experimental.PointTombstoneWeight = 1
 	}
+	if o.Experimental.MultiLevelCompactionHueristic == nil {
+		o.Experimental.MultiLevelCompactionHueristic = WriteAmpHeuristic{addPropensity: 0}
+	}
 
 	o.initMaps()
 	return o

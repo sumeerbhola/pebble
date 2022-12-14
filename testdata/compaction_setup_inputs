@@ -84,6 +84,7 @@ L1
   000001:[a#5,1-b#6,1]
 L2
   000003:[a#3,1-d#4,1]
+init-multi-level(1,2,3)
 
 # Verify the available disk capacity limit doesn't affect the
 # output level clean-cut expansion.
