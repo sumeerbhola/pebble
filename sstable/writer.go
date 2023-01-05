@@ -1733,6 +1733,7 @@ func (w *Writer) Close() (err error) {
 	defer func() {
 		if w.valueBlockWriter != nil {
 			releaseValueBlockWriter(w.valueBlockWriter)
+			w.valueBlockWriter = nil
 		}
 		if w.syncer == nil {
 			return
