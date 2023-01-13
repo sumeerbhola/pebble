@@ -19,6 +19,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/pebble/internal/base"
+	"github.com/cockroachdb/pebble/internal/humanize"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
@@ -1387,4 +1388,97 @@ func verifyGetNotFound(t *testing.T, r Reader, key []byte) {
 	if err != base.ErrNotFound {
 		t.Fatalf("expected nil, but got %s", val)
 	}
+}
+
+func TestWriteAmpWithBlobs(t *testing.T) {
+	lel := MakeLoggingEventListener(nil)
+	lel.BlobFileDeleted = nil
+	lel.BlobFileCreated = nil
+	lel.TableDeleted = nil
+	lel.TableCreated = nil
+	lel.WALDeleted = nil
+	lel.WALCreated = nil
+	lel.WriteStallBegin = nil
+	lel.WriteStallEnd = nil
+	opts := &Options{
+		FS:                    vfs.NewMem(),
+		EventListener: &lel,
+		MemTableSize: 8 << 20,
+		MemTableStopWritesThreshold: 2,
+		L0StopWritesThreshold: 4,
+		LBaseMaxBytes: 10 << 20,
+		FormatMajorVersion: FormatNewest,
+	}
+	opts.Experimental.BlobValueSizeThreshold = 1
+	opts.Experimental.EnableValueBlocks = func() bool { return true }
+	opts.Levels = make([]LevelOptions, numLevels)
+	opts.Levels[0] = LevelOptions{
+		TargetFileSize:                         1 << 20,
+		TargetFileSizeIncludingBlobValueSize:   2 << 20,
+		// I think I increased this to prevent blob rollover before
+		// TargetFileSizeIncludingBlobValueSize and then a small blob file getting
+		// created.
+		TargetBlobFileSizeBasedOnBlobValueSize: (3 << 20)/2,
+	}
+	for i := 1; i < numLevels; i++ {
+		opts.Levels[i] = opts.Levels[i-1]
+		opts.Levels[i].TargetFileSize *= 2
+		opts.Levels[i].TargetFileSizeIncludingBlobValueSize *= 2
+		opts.Levels[i].TargetBlobFileSizeBasedOnBlobValueSize *= 2
+	}
+	d, err := Open("", opts)
+	require.NoError(t, err)
+
+	rng := rand.New(rand.NewSource(123))
+
+	numKeysWritten := 0
+	var buf [1000]byte
+	// 10GB is approx 10M kv pairs
+	writeBatchFunc := func() {
+		b := d.NewBatch()
+		for i := 0; i < 100; i++ {
+			k := rng.Uint64()
+			key := fmt.Sprintf("%8d", k)
+			n, err := rng.Read(buf[:])
+			require.Equal(t, len(buf), n)
+			require.NoError(t, err)
+			b.Set([]byte(key), buf[:], nil)
+			numKeysWritten++
+		}
+		require.NoError(t, d.Apply(b, nil))
+
+	}
+	waitForLowScore := func() {
+		done := false
+		for !done {
+			m := d.Metrics()
+			done = true
+			for i := range m.Levels {
+				if m.Levels[i].Score > 2 {
+					time.Sleep(time.Second)
+					done = false
+					break
+				}
+			}
+		}
+	}
+	for numKeysWritten < 6 << 20 {
+		before := numKeysWritten/(256<<10)
+		writeBatchFunc()
+		after := numKeysWritten/(256<<10)
+		if before != after {
+			metrics := d.Metrics()
+			fmt.Printf("keys: %d\n%s\n", numKeysWritten, metrics.String())
+			fmt.Printf("\nblobs\n%s\n", d.BlobsDebugString())
+			waitForLowScore()
+		}
+	}
+	for i := 0; i < numLevels; i++ {
+		d.opts.Logger.Infof("Blob Files %d: created %s, rolled over %s", i,
+			humanize.SI.Uint64(atomic.LoadUint64(&BlobFileCreationCount[i])),
+			humanize.SI.Uint64(atomic.LoadUint64(&BlobFileRolloverCountDueToSize[i])))
+	}
+	notReuseDBReasons.log(d.opts.Logger)
+	d.Close()
+
 }

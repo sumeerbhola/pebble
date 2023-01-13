@@ -19,6 +19,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/errors/oserror"
 	"github.com/cockroachdb/pebble/internal/base"
+	"github.com/cockroachdb/pebble/internal/humanize"
 	"github.com/cockroachdb/pebble/internal/keyspan"
 	"github.com/cockroachdb/pebble/internal/manifest"
 	"github.com/cockroachdb/pebble/internal/private"
@@ -138,6 +139,27 @@ func (f *fileSizeSplitter) shouldSplitBefore(
 	// better to make a sequence of range tombstones visible to the fragmenter.
 	if key.Kind() != InternalKeyKindRangeDelete && tw != nil &&
 		tw.EstimatedSize() >= f.maxFileSize {
+		return splitNow
+	}
+	return noSplit
+}
+
+func (f *fileAndBlobSizeSplitter) onNewOutput(key *InternalKey) []byte {
+	return nil
+}
+
+type fileAndBlobSizeSplitter struct {
+	maxFileSize uint64
+}
+
+func (f *fileAndBlobSizeSplitter) shouldSplitBefore(
+	key *InternalKey, tw *sstable.Writer,
+) compactionSplitSuggestion {
+	// The Kind != RangeDelete part exists because EstimatedSize doesn't grow
+	// rightaway when a range tombstone is added to the fragmenter. It's always
+	// better to make a sequence of range tombstones visible to the fragmenter.
+	if key.Kind() != InternalKeyKindRangeDelete && tw != nil &&
+		tw.EstimatedSizeWithBlobReferences() >= f.maxFileSize {
 		return splitNow
 	}
 	return noSplit
@@ -285,6 +307,13 @@ const (
 	compactionKindFlush
 	compactionKindMove
 	compactionKindDeleteOnly
+	// TODO(sumeer): should we rewrite the blobt's? Elision only compactions use
+	// a threshold of 10% deletions, in deciding whether to do such a
+	// compaction, which is not high. So it is possible that very little will be
+	// deleted. We could decide based on the stats
+	// (f.Stats.RangeDeletionsBytesEstimate, f.Size, f.Stats.NumDeletions,
+	// f.Stats.NumEntries). For now we use the usual logic that only considers
+	// what fraction is already garbage (this could cause high space amp).
 	compactionKindElisionOnly
 	compactionKindRead
 	compactionKindRewrite
@@ -373,6 +402,261 @@ func rangeKeyCompactionTransform(
 	})
 }
 
+type BlobFileDecisionForCompaction struct {
+	FileNum
+	FileSize uint64
+	ReuseReference bool
+	FileAtLowestCompactionLevel bool
+	CompactionInputRefs int32
+	Refs int32
+	LiveFraction float64
+	ReuseCounter uint64
+}
+
+type compactionBlobFileState struct {
+	inputBlobSize uint64
+	lowestLevelBlobSize uint64
+	reusedBlobSize uint64
+	lowestLevelReusedBlobSize uint64
+	notReusedDueToReferenceBlobSize uint64
+	notReusedDueToGarbageBlobSize uint64
+	notReusedDueToDepth uint64
+
+	reuseReferenceMap map[FileNum]BlobFileDecisionForCompaction
+}
+
+var BlobFileCreationCount [numLevels]uint64
+var BlobFileRolloverCountDueToSize [numLevels]uint64
+
+type NotReuseReasons struct {
+	NotReusedDueToReference atomic.Uint64
+	NotReusedDueToGarbageSize atomic.Uint64
+	NotReusedDueToDepth atomic.Uint64
+}
+
+type NotReuseDBReasons [numLevels]NotReuseReasons
+
+func (nrdr *NotReuseDBReasons) update(c CompactionInfo) {
+	level := c.Input[len(c.Input)-1].Level
+	(*nrdr)[level].NotReusedDueToReference.Add(c.NotReusedDueToReferenceBlobSize)
+	(*nrdr)[level].NotReusedDueToGarbageSize.Add(c.NotReusedDueToGarbageBlobSize)
+	(*nrdr)[level].NotReusedDueToDepth.Add(c.NotReusedDueToDepthBlobSize)
+}
+
+func (nrdr *NotReuseDBReasons) log(logger Logger) {
+	logger.Infof("\nNot reuse reasons per-level\n")
+	for i := 0; i < numLevels; i++ {
+		logger.Infof("%d: %s ref, %s g, %s depth",
+			i,
+			humanize.IEC.Uint64((*nrdr)[i].NotReusedDueToReference.Load()),
+			humanize.IEC.Uint64((*nrdr)[i].NotReusedDueToGarbageSize.Load()),
+			humanize.IEC.Uint64((*nrdr)[i].NotReusedDueToDepth.Load()))
+	}
+}
+
+var notReuseDBReasons NotReuseDBReasons
+
+func (cbfs *compactionBlobFileState) noReuse() {
+	cbfs.lowestLevelReusedBlobSize = 0
+	cbfs.notReusedDueToDepth += cbfs.reusedBlobSize
+	cbfs.reusedBlobSize = 0
+	cbfs.notReusedDueToDepth += cbfs.notReusedDueToReferenceBlobSize
+	cbfs.notReusedDueToReferenceBlobSize = 0
+	cbfs.notReusedDueToDepth += cbfs.notReusedDueToGarbageBlobSize
+	cbfs.notReusedDueToGarbageBlobSize = 0
+	for f, decision := range cbfs.reuseReferenceMap {
+		decision.ReuseReference = false
+		decision.ReuseCounter = 0
+		cbfs.reuseReferenceMap[f] = decision
+	}
+}
+
+func (cbfs *compactionBlobFileState) insert(
+	fileNum FileNum, decision BlobFileDecisionForCompaction,
+) {
+	_, ok := cbfs.reuseReferenceMap[fileNum]
+	if ok {
+		panic(errors.AssertionFailedf("fileNum %d is already in the map", fileNum))
+	}
+	if cbfs.reuseReferenceMap == nil {
+		cbfs.reuseReferenceMap = map[FileNum]BlobFileDecisionForCompaction{}
+	}
+	cbfs.reuseReferenceMap[fileNum] = decision
+}
+
+func (cbfs *compactionBlobFileState) reuseReference(
+	fileNum FileNum,
+) (reuse bool, reuseCounter uint64) {
+	decision, ok := cbfs.reuseReferenceMap[fileNum]
+	if !ok {
+		panic(errors.AssertionFailedf("fileNum %d is not in the map", fileNum))
+	}
+	return decision.ReuseReference, decision.ReuseCounter
+}
+
+func initCompactionBlobFileState(c *compaction) {
+	n := len(c.inputs)
+	type blobFileInfo struct {
+		meta                *manifest.BlobFileMetadata
+		// References to this blob file from input ssts in the compaction.
+		refCount            int32
+		referencedValueSize uint64
+		reuseCounter uint64
+	}
+	// Keyed by blob filenum.
+	var blobMap map[FileNum]blobFileInfo
+
+	reuseAll := true
+	const reuseCounterThresholdOverall = 5
+	reuseCounterThreshold := uint64(reuseCounterThresholdOverall)
+	if c.inputs[n-1].level == (numLevels-1) {
+		reuseCounterThreshold = 2
+	}
+	reuseCounterThresholdExceeded := false
+	// For intra-L0 compaction, I think n==1, so the following logic is sound.
+	// Compactions from L0=>Lbase with many L0 sub-levels, all L0 files will be
+	// in c.inputs[0], so this is again sound.
+	for i := 0; i < n; i++ {
+		iter := c.inputs[i].files.Iter()
+		for f := iter.First(); f != nil; f = iter.Next() {
+			for _, reference := range f.BlobReferences {
+				if blobMap == nil {
+					blobMap = map[FileNum]blobFileInfo{}
+				}
+				v := blobMap[reference.FileNum]
+				v.meta = reference.Meta
+				v.refCount++
+				v.referencedValueSize += reference.ValueSize
+				if v.reuseCounter < reference.ReuseCounter {
+					v.reuseCounter = reference.ReuseCounter
+				}
+				blobMap[reference.FileNum] = v
+			}
+		}
+		for fileNum, f := range blobMap {
+			// TODO: reduce this wasteThreshold in some experiments to see if it
+			// reduces write amp.
+			// TODO: don't need to reduce waste threshold since don't really have this
+			// much waste due to rewriting for other reasons. But we should monitor
+			// the total space amp and adjust this threshold if we find the space amp
+			// is higher than some threshold.
+			const wasteThreshold = 0.5
+			reuseReference := false
+			// We can reuse the reference if one of the following is true:
+			// - All the references to this blob file are from inputs to the
+			//   compaction. This ensures that by "moving" the blob file we are not
+			//   leaving behind some references in the previous level.
+			// - This blob file is in the lowest level.
+			//
+			// The above is the only correctness requirement.
+			//
+			// The rest are performance related:
+			//
+			// Want low space amp: wasteThreshold is a crude knob. We don't actually
+			// have waste equal to the wasteThreshold because other criteria can
+			// cause reuseReference to become false. Say current space-amp is 1.5
+			// and goal is 1.3 and wasteThreshold implied space-amp is 2.0. Could
+			// compute a f(current-space-amp, desired-space-amp) as a variable
+			// wasteThreshold. But don't want this to be history dependent.
+			// Something as crude as wasteThreshold=0.5 may be good enough that we
+			// don't need to do anything clever here.
+			//
+			// Larger blob file sizes:
+			//
+			// Locality of access at read time: We could focus on stack depth in the
+			// scope of this compaction. RefsInLatestVersion is a hackier way in
+			// that it does not look at stack depth.
+			//
+			// blob-ref starts of as a single keyspan encompassing the whole blob
+			// file. When sst gets rewritten some refs may naturally go away due to
+			// *DELs. Additionally, some contiguous span will become blob-reffed by
+			// some other sst.
+			//
+			// Don't want to create small blob files or do we want to allow that
+			// creation but eventually merge them.
+
+			fileAtLowestCompactionLevel := i == (n-1)
+			compactionInputRefs := f.refCount
+			refs := f.meta.RefsInLatestVersion
+			// First runs:
+			// - refs <= 4 is required to reuse reference.
+			// - valueSizeThreshold := c.maxBlobFileSizeBasedOnBlobValueSize / 4 and
+			//   f.meta.ValueSize < valueSizeThreshold causes no reuse of reference.
+			//
+			// Second runs:
+			// -
+			refCountThresholdFunc := func() bool {
+				return refs <= 4 || true
+			}
+			liveFraction := float64(f.meta.LiveValueSize)/float64(f.meta.ValueSize)
+			// refs <= 4 was done to rewrite more often.
+			canReuseDueToReference := compactionInputRefs == refs || fileAtLowestCompactionLevel
+			if canReuseDueToReference && liveFraction > wasteThreshold && refCountThresholdFunc() {
+				reuseReference = true
+			}
+
+			// The refs logic biases towards overwriting the accidental small files,
+			// since they are more likely to have compactionInputRefs == refs and have
+			// <= 4 refs at the lowest level. We have seen in experiments that L0 is mostly
+			// producing files at the target blob size, but the L0 files that end up in L6
+			// are < 1/4th the typical L0 size.
+			valueSizeThreshold := c.maxBlobFileSizeBasedOnBlobValueSize / 4
+			if f.meta.OriginalLevel != c.outputLevel.level && f.meta.ValueSize < valueSizeThreshold && false {
+				reuseReference = false
+			}
+			reuseCounter := uint64(0)
+			if reuseReference {
+				if f.reuseCounter >= reuseCounterThreshold {
+					reuseCounterThresholdExceeded = true
+					reuseReference = false
+				} else {
+					reuseCounter = f.reuseCounter+1
+				}
+			}
+			if !reuseReference {
+				reuseAll = false
+			}
+
+			c.blobState.insert(fileNum, BlobFileDecisionForCompaction{
+				FileNum: fileNum,
+				FileSize: f.meta.Size,
+				ReuseReference:              reuseReference,
+				FileAtLowestCompactionLevel: fileAtLowestCompactionLevel,
+				CompactionInputRefs:         compactionInputRefs,
+				Refs:                        refs,
+				LiveFraction:                liveFraction,
+				ReuseCounter: 							 reuseCounter,
+			})
+			c.blobState.inputBlobSize += f.meta.Size
+			if reuseReference {
+				c.blobState.reusedBlobSize += f.meta.Size
+			}
+			if fileAtLowestCompactionLevel {
+				c.blobState.lowestLevelBlobSize += f.meta.Size
+				if reuseReference {
+					c.blobState.lowestLevelReusedBlobSize += f.meta.Size
+				}
+			}
+			if !reuseReference {
+				if liveFraction <= wasteThreshold {
+					c.blobState.notReusedDueToGarbageBlobSize += f.meta.Size
+				} else if !canReuseDueToReference {
+					c.blobState.notReusedDueToReferenceBlobSize += f.meta.Size
+				} else {
+					c.blobState.notReusedDueToDepth += f.meta.Size
+				}
+			}
+			delete(blobMap, fileNum)
+		}
+	}
+	if c.kind == compactionKindMove && !reuseAll {
+		c.kind = compactionKindDefault
+	}
+	if reuseCounterThresholdExceeded {
+		c.blobState.noReuse()
+	}
+}
+
 // compaction is a table compaction from one level to the next, starting from a
 // given version.
 type compaction struct {
@@ -414,6 +698,9 @@ type compaction struct {
 	// by tests to allow range tombstones or range keys to be added to tables where
 	// they would otherwise be elided.
 	disableSpanElision bool
+
+	maxOutputFileSizeIncludingBlobValueSize uint64
+	maxBlobFileSizeBasedOnBlobValueSize     uint64
 
 	// flushing contains the flushables (aka memtables) that are being flushed.
 	flushing flushableList
@@ -477,6 +764,8 @@ type compaction struct {
 	// lower level in the LSM during runCompaction.
 	allowedZeroSeqNum bool
 
+	blobState compactionBlobFileState
+
 	metrics map[int]*LevelMetrics
 }
 
@@ -485,6 +774,14 @@ func (c *compaction) makeInfo(jobID int) CompactionInfo {
 		JobID:  jobID,
 		Reason: c.kind.String(),
 		Input:  make([]LevelInfo, 0, len(c.inputs)),
+		InputBlobSize: c.blobState.inputBlobSize,
+		LowestLevelBlobSize: c.blobState.lowestLevelBlobSize,
+		ReusedBlobSize: c.blobState.reusedBlobSize,
+		LowestLevelReusedBlobSize: c.blobState.lowestLevelReusedBlobSize,
+		NotReusedDueToReferenceBlobSize: c.blobState.notReusedDueToReferenceBlobSize,
+		NotReusedDueToGarbageBlobSize: c.blobState.notReusedDueToGarbageBlobSize,
+		NotReusedDueToDepthBlobSize: c.blobState.notReusedDueToDepth,
+		BlobDecisions: make([]BlobFileDecisionForCompaction, 0, len(c.blobState.reuseReferenceMap)),
 	}
 	for _, cl := range c.inputs {
 		inputInfo := LevelInfo{Level: cl.level, Tables: nil}
@@ -509,25 +806,31 @@ func (c *compaction) makeInfo(jobID int) CompactionInfo {
 		// semantic distinction.
 		info.Output.Level = numLevels - 1
 	}
+	for _, decision := range c.blobState.reuseReferenceMap {
+		info.BlobDecisions = append(info.BlobDecisions, decision)
+	}
+	notReuseDBReasons.update(info)
 	return info
 }
 
 func newCompaction(pc *pickedCompaction, opts *Options) *compaction {
 	c := &compaction{
-		kind:              compactionKindDefault,
-		cmp:               pc.cmp,
-		equal:             opts.equal(),
-		comparer:          opts.Comparer,
-		formatKey:         opts.Comparer.FormatKey,
-		score:             pc.score,
-		inputs:            pc.inputs,
-		smallest:          pc.smallest,
-		largest:           pc.largest,
-		logger:            opts.Logger,
-		version:           pc.version,
-		maxOutputFileSize: pc.maxOutputFileSize,
-		maxOverlapBytes:   pc.maxOverlapBytes,
-		l0SublevelInfo:    pc.l0SublevelInfo,
+		kind:                                    compactionKindDefault,
+		cmp:                                     pc.cmp,
+		equal:                                   opts.equal(),
+		comparer:                                opts.Comparer,
+		formatKey:                               opts.Comparer.FormatKey,
+		score:                                   pc.score,
+		inputs:                                  pc.inputs,
+		smallest:                                pc.smallest,
+		largest:                                 pc.largest,
+		logger:                                  opts.Logger,
+		version:                                 pc.version,
+		maxOutputFileSize:                       pc.maxOutputFileSize,
+		maxOutputFileSizeIncludingBlobValueSize: pc.maxOutputFileSizeIncludingBlobValueSize,
+		maxBlobFileSizeBasedOnBlobValueSize:     pc.maxBlobFileSizeBasedOnBlobValueSize,
+		maxOverlapBytes:                         pc.maxOverlapBytes,
+		l0SublevelInfo:                          pc.l0SublevelInfo,
 	}
 	c.startLevel = &c.inputs[0]
 	c.outputLevel = &c.inputs[1]
@@ -553,6 +856,7 @@ func newCompaction(pc *pickedCompaction, opts *Options) *compaction {
 		// that will require a very expensive merge later on.
 		c.kind = compactionKindMove
 	}
+	initCompactionBlobFileState(c)
 	return c
 }
 
@@ -627,6 +931,9 @@ func adjustGrandparentOverlapBytesForFlush(c *compaction, flushingBytes uint64) 
 	// the compression ratio.
 	const approxCompressionRatio = 0.2
 	approxOutputBytes := approxCompressionRatio * float64(flushingBytes)
+	// We have blobs now but maxOutputFileSize is lower than
+	// maxOutputFileSizeIncludingBlobValueSize so we use that anyway
+	// since we don't mind splitting more.
 	approxNumFilesBasedOnTargetSize :=
 		int(math.Ceil(approxOutputBytes / float64(c.maxOutputFileSize)))
 	acceptableFileCount := float64(4 * approxNumFilesBasedOnTargetSize)
@@ -634,7 +941,7 @@ func adjustGrandparentOverlapBytesForFlush(c *compaction, flushingBytes uint64) 
 	// incur this linear cost in findGrandparentLimit too, so we are also
 	// willing to pay it now. We could approximate this cheaply by using
 	// the mean file size of Lbase.
-	grandparentFileBytes := c.grandparents.SizeSum()
+	grandparentFileBytes := c.grandparents.SizePlusBlobBytesSum()
 	fileCountUpperBoundDueToGrandparents :=
 		float64(grandparentFileBytes) / float64(c.maxOverlapBytes)
 	if fileCountUpperBoundDueToGrandparents > acceptableFileCount {
@@ -646,17 +953,19 @@ func adjustGrandparentOverlapBytesForFlush(c *compaction, flushingBytes uint64) 
 
 func newFlush(opts *Options, cur *version, baseLevel int, flushing flushableList) *compaction {
 	c := &compaction{
-		kind:              compactionKindFlush,
-		cmp:               opts.Comparer.Compare,
-		equal:             opts.equal(),
-		comparer:          opts.Comparer,
-		formatKey:         opts.Comparer.FormatKey,
-		logger:            opts.Logger,
-		version:           cur,
-		inputs:            []compactionLevel{{level: -1}, {level: 0}},
-		maxOutputFileSize: math.MaxUint64,
-		maxOverlapBytes:   math.MaxUint64,
-		flushing:          flushing,
+		kind:                                    compactionKindFlush,
+		cmp:                                     opts.Comparer.Compare,
+		equal:                                   opts.equal(),
+		comparer:                                opts.Comparer,
+		formatKey:                               opts.Comparer.FormatKey,
+		logger:                                  opts.Logger,
+		version:                                 cur,
+		inputs:                                  []compactionLevel{{level: -1}, {level: 0}},
+		maxOutputFileSize:                       math.MaxUint64,
+		maxOutputFileSizeIncludingBlobValueSize: math.MaxUint64,
+		maxBlobFileSizeBasedOnBlobValueSize:     uint64(opts.Level(0).TargetBlobFileSizeBasedOnBlobValueSize),
+		maxOverlapBytes:                         math.MaxUint64,
+		flushing:                                flushing,
 	}
 	c.startLevel = &c.inputs[0]
 	c.outputLevel = &c.inputs[1]
@@ -717,6 +1026,7 @@ func newFlush(opts *Options, cur *version, baseLevel int, flushing flushableList
 
 	if opts.FlushSplitBytes > 0 {
 		c.maxOutputFileSize = uint64(opts.Level(0).TargetFileSize)
+		c.maxOutputFileSizeIncludingBlobValueSize = uint64(opts.Level(0).TargetFileSizeIncludingBlobValueSize)
 		c.maxOverlapBytes = maxGrandparentOverlapBytes(opts, 0)
 		c.grandparents = c.version.Overlaps(baseLevel, c.cmp, c.smallest.UserKey,
 			c.largest.UserKey, c.largest.IsExclusiveSentinel())
@@ -883,7 +1193,7 @@ func (c *compaction) findGrandparentLimit(start []byte) []byte {
 	var overlappedBytes uint64
 	var greater bool
 	for f := iter.SeekGE(c.cmp, start); f != nil; f = iter.Next() {
-		overlappedBytes += f.Size
+		overlappedBytes += f.SizePlusBlobBytes()
 		// To ensure forward progress we always return a larger user
 		// key than where we started. See comments above clients of
 		// this function for how this is used.
@@ -1497,8 +1807,9 @@ func (d *DB) getDeletionPacerInfo() deletionPacerInfo {
 	// take 10 microseconds or less.
 	pacerInfo.freeBytes = d.calculateDiskAvailableBytes()
 	d.mu.Lock()
-	pacerInfo.obsoleteBytes = d.mu.versions.metrics.Table.ObsoleteSize
-	pacerInfo.liveBytes = uint64(d.mu.versions.metrics.Total().Size)
+	pacerInfo.obsoleteBytes = d.mu.versions.metrics.Table.ObsoleteSize + d.mu.versions.metrics.BlobFile.ObsoleteSize
+	total := d.mu.versions.metrics.Total()
+	pacerInfo.liveBytes = uint64(total.Size) + uint64(total.BlobSize)
 	d.mu.Unlock()
 	return pacerInfo
 }
@@ -1671,7 +1982,7 @@ func (d *DB) flush1() (bytesFlushed uint64, err error) {
 	})
 	startTime := d.timeNow()
 
-	ve, pendingOutputs, err := d.runCompaction(jobID, c)
+	ve, pendingOutputs, pendingBlobOutputs, err := d.runCompaction(jobID, c)
 
 	info := FlushInfo{
 		JobID:    jobID,
@@ -1705,7 +2016,16 @@ func (d *DB) flush1() (bytesFlushed uint64, err error) {
 			info.Err = err
 			// TODO(peter): untested.
 			d.mu.versions.obsoleteTables = append(d.mu.versions.obsoleteTables, pendingOutputs...)
-			d.mu.versions.incrementObsoleteTablesLocked(pendingOutputs)
+			var obsoleteBlobs []fileInfo
+			for i := range pendingBlobOutputs {
+				obsoleteBlobs = append(obsoleteBlobs,
+					fileInfo{
+						fileNum:  pendingBlobOutputs[i].FileNum,
+						fileSize: pendingBlobOutputs[i].Size,
+					})
+			}
+			d.mu.versions.obsoleteBlobFiles = append(d.mu.versions.obsoleteBlobFiles, obsoleteBlobs...)
+			d.mu.versions.incrementObsoleteTablesLocked(pendingOutputs, obsoleteBlobs)
 		}
 	}
 
@@ -2160,7 +2480,8 @@ func (d *DB) compact(c *compaction, errChannel chan error) {
 	})
 }
 
-// compact1 runs one compaction.
+// compact1 runs one compaction. This is the entry point for running all kinds
+// of compactions.
 //
 // d.mu must be held when calling this, but the mutex may be dropped and
 // re-acquired during the course of this method.
@@ -2177,7 +2498,7 @@ func (d *DB) compact1(c *compaction, errChannel chan error) (err error) {
 	d.opts.EventListener.CompactionBegin(info)
 	startTime := d.timeNow()
 
-	ve, pendingOutputs, err := d.runCompaction(jobID, c)
+	ve, pendingOutputs, pendingBlobOutputs, err := d.runCompaction(jobID, c)
 
 	info.Duration = d.timeNow().Sub(startTime)
 	if err == nil {
@@ -2188,7 +2509,17 @@ func (d *DB) compact1(c *compaction, errChannel chan error) (err error) {
 		if err != nil {
 			// TODO(peter): untested.
 			d.mu.versions.obsoleteTables = append(d.mu.versions.obsoleteTables, pendingOutputs...)
-			d.mu.versions.incrementObsoleteTablesLocked(pendingOutputs)
+			var obsoleteBlobs []fileInfo
+			for i := range pendingBlobOutputs {
+				obsoleteBlobs = append(obsoleteBlobs,
+					fileInfo{
+						fileNum:  pendingBlobOutputs[i].FileNum,
+						fileSize: pendingBlobOutputs[i].Size,
+					})
+			}
+			d.mu.versions.obsoleteBlobFiles = append(d.mu.versions.obsoleteBlobFiles, obsoleteBlobs...)
+			d.mu.versions.incrementObsoleteTablesLocked(pendingOutputs, obsoleteBlobs)
+
 		}
 	}
 
@@ -2229,7 +2560,12 @@ func (d *DB) compact1(c *compaction, errChannel chan error) (err error) {
 // re-acquired during the course of this method.
 func (d *DB) runCompaction(
 	jobID int, c *compaction,
-) (ve *versionEdit, pendingOutputs []*fileMetadata, retErr error) {
+) (
+	ve *versionEdit,
+	pendingOutputs []*fileMetadata,
+	pendingBlobOutputs []*manifest.BlobFileMetadata,
+	retErr error,
+) {
 	// As a sanity check, confirm that the smallest / largest keys for new and
 	// deleted files in the new versionEdit pass a validation function before
 	// returning the edit.
@@ -2244,7 +2580,7 @@ func (d *DB) runCompaction(
 			}
 		}
 	}()
-
+	// d.opts.Logger.Infof("output level %d max blob file size: %d", c.outputLevel.level, c.maxBlobFileSizeBasedOnBlobValueSize)
 	// Check for a delete-only compaction. This can occur when wide range
 	// tombstones completely contain sstables.
 	if c.kind == compactionKindDeleteOnly {
@@ -2265,7 +2601,7 @@ func (d *DB) runCompaction(
 			}
 			c.metrics[cl.level] = levelMetrics
 		}
-		return ve, nil, nil
+		return ve, nil, nil, nil
 	}
 
 	// Check for a trivial move of one table from one level to the next. We avoid
@@ -2295,12 +2631,13 @@ func (d *DB) runCompaction(
 				{Level: c.outputLevel.level, Meta: meta},
 			},
 		}
-		return ve, nil, nil
+		return ve, nil, nil, nil
 	}
 
 	defer func() {
 		if retErr != nil {
 			pendingOutputs = nil
+			pendingBlobOutputs = nil
 		}
 	}()
 
@@ -2314,7 +2651,7 @@ func (d *DB) runCompaction(
 
 	iiter, err := c.newInputIter(d.newIters, d.tableNewRangeKeyIter, snapshots)
 	if err != nil {
-		return nil, pendingOutputs, err
+		return nil, pendingOutputs, pendingBlobOutputs, err
 	}
 	c.allowedZeroSeqNum = c.allowZeroSeqNum()
 	iter := newCompactionIter(c.cmp, c.equal, c.formatKey, d.merge, iiter, snapshots,
@@ -2324,16 +2661,28 @@ func (d *DB) runCompaction(
 	var (
 		filenames []string
 		tw        *sstable.Writer
+		fileMeta  *fileMetadata
+
+		blobFileNames []string
+		// tw == nil => blobWriter == nil
+		blobWriter *sstable.BlobFileWriter
 	)
 	defer func() {
 		if iter != nil {
 			retErr = firstError(retErr, iter.Close())
+		}
+		if blobWriter != nil {
+			retErr = firstError(retErr, blobWriter.Flush())
+			blobWriter.Close()
 		}
 		if tw != nil {
 			retErr = firstError(retErr, tw.Close())
 		}
 		if retErr != nil {
 			for _, filename := range filenames {
+				d.opts.FS.Remove(filename)
+			}
+			for _, filename := range blobFileNames {
 				d.opts.FS.Remove(filename)
 			}
 		}
@@ -2384,7 +2733,15 @@ func (d *DB) runCompaction(
 		// Cannot yet write block properties.
 		writerOpts.BlockPropertyCollectors = nil
 	}
-
+	blobFileWriterOpts := sstable.BlobFileWriterOptions{}
+	if tableFormat == sstable.TableFormatPebblev3 {
+		blobFileWriterOpts = sstable.BlobFileWriterOptions{
+			BlockSize:          d.opts.Levels[0].BlockSize,
+			BlockSizeThreshold: d.opts.Levels[0].BlockSizeThreshold,
+			Compression:        d.opts.Levels[0].Compression,
+			ChecksumType:       sstable.ChecksumTypeCRC32c,
+		}
+	}
 	// prevPointKey is a sstable.WriterOption that provides access to
 	// the last point key written to a writer's sstable. When a new
 	// output begins in newOutput, prevPointKey is updated to point to
@@ -2401,8 +2758,27 @@ func (d *DB) runCompaction(
 		}
 	}()
 
+	shouldBeBlob := func(key *InternalKey, valLen int) bool {
+		return tableFormat == sstable.TableFormatPebblev3 && key.Kind() == InternalKeyKindSet &&
+			valLen > d.opts.Experimental.BlobValueSizeThreshold
+	}
+	addReferenceToFileMeta := func(blobFileNum FileNum, valLen int, reuseCounter uint64) {
+		for i := range fileMeta.BlobReferences {
+			if fileMeta.BlobReferences[i].FileNum == blobFileNum {
+				fileMeta.BlobReferences[i].ValueSize += uint64(valLen)
+				return
+			}
+		}
+		fileMeta.BlobReferences = append(fileMeta.BlobReferences,
+			manifest.BlobReference{
+				FileNum:      blobFileNum,
+				ValueSize:    uint64(valLen),
+				ReuseCounter: reuseCounter,
+			})
+	}
+
 	newOutput := func() error {
-		fileMeta := &fileMetadata{}
+		fileMeta = &fileMetadata{}
 		d.mu.Lock()
 		fileNum := d.mu.versions.getNextFileNum()
 		fileMeta.FileNum = fileNum
@@ -2454,7 +2830,89 @@ func (d *DB) runCompaction(
 		})
 		return nil
 	}
-
+	flushAndCloseBlobWriter := func() error {
+		err := blobWriter.Flush()
+		if err != nil {
+			blobWriter.Close()
+			blobWriter = nil
+			return err
+		}
+		blobMeta := ve.NewBlobFiles[len(ve.NewBlobFiles)-1].Meta
+		blobMeta.ValueSize = blobWriter.BlobValueSize()
+		blobMeta.Size = blobWriter.FileSize()
+		if c.flushing == nil {
+			outputMetrics.BlobBytesCompacted += blobMeta.Size
+		} else {
+			outputMetrics.BlobBytesFlushed += blobMeta.Size
+		}
+		blobWriter.Close()
+		blobWriter = nil
+		return nil
+	}
+	ensureBlobFileWriter := func(valLen int) error {
+		if blobWriter != nil {
+			// Should roll-over?
+			curSize := blobWriter.BlobValueSize()
+			if curSize > c.maxBlobFileSizeBasedOnBlobValueSize {
+				worstCaseFutureIncrease := int64(c.maxOutputFileSizeIncludingBlobValueSize) -
+					int64(tw.EstimatedSizeWithBlobReferences())
+				if worstCaseFutureIncrease > 0 {
+					possibleSize := uint64(worstCaseFutureIncrease) + curSize
+					if float64(possibleSize)/float64(curSize) > 1.5 {
+						// Roll-over.
+						atomic.AddUint64(&BlobFileRolloverCountDueToSize[c.outputLevel.level], 1)
+						if err := flushAndCloseBlobWriter(); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+		if blobWriter != nil {
+			return nil
+		}
+		atomic.AddUint64(&BlobFileCreationCount[c.outputLevel.level], 1)
+		blobFileMeta := &manifest.BlobFileMetadata{}
+		d.mu.Lock()
+		fileNum := d.mu.versions.getNextFileNum()
+		blobFileMeta.FileNum = fileNum
+		d.mu.Unlock()
+		filename := base.MakeFilepath(d.opts.FS, d.dirname, base.FileTypeBlob, fileNum)
+		file, err := d.opts.FS.Create(filename)
+		if err != nil {
+			return err
+		}
+		reason := "flushing"
+		if c.flushing == nil {
+			reason = "compacting"
+		}
+		d.opts.EventListener.BlobFileCreated(BlobFileCreateInfo{
+			JobID:   jobID,
+			Reason:  reason,
+			Path:    filename,
+			FileNum: fileNum,
+		})
+		file = vfs.NewSyncingFile(file, vfs.SyncingFileOptions{
+			NoSyncOnClose: d.opts.NoSyncOnClose,
+			BytesPerSync:  d.opts.BytesPerSync,
+		})
+		file = &compactionFile{
+			File:     file,
+			versions: d.mu.versions,
+			written:  &c.bytesWritten,
+		}
+		blobFileNames = append(blobFileNames, filename)
+		pendingBlobOutputs = append(pendingBlobOutputs, blobFileMeta)
+		// TODO(sumeer): cacheOpts similar to table writer.
+		blobWriter = sstable.NewBlobFileWriter(fileNum, file, blobFileWriterOpts)
+		blobFileMeta.CreationTime = time.Now().Unix()
+		blobFileMeta.OriginalLevel = c.outputLevel.level
+		ve.NewBlobFiles = append(ve.NewBlobFiles, manifest.NewBlobFileEntry{
+			Level: c.outputLevel.level,
+			Meta:  blobFileMeta,
+		})
+		return nil
+	}
 	// splitL0Outputs is true during flushes and intra-L0 compactions with flush
 	// splits enabled.
 	splitL0Outputs := c.outputLevel.level == 0 && d.opts.FlushSplitBytes > 0
@@ -2544,11 +3002,17 @@ func (d *DB) runCompaction(
 		if tw == nil {
 			return nil
 		}
-
+		if blobWriter != nil {
+			err := flushAndCloseBlobWriter()
+			if err != nil {
+				return err
+			}
+		}
 		if err := tw.Close(); err != nil {
 			tw = nil
 			return err
 		}
+		fileMeta = nil
 		d.opts.Experimental.CPUWorkPermissionGranter.CPUWorkDone(cpuWorkHandle)
 		cpuWorkHandle = nil
 		writerMeta, err := tw.Metadata()
@@ -2690,8 +3154,26 @@ func (d *DB) runCompaction(
 	if splitL0Outputs {
 		outputSplitters = append(outputSplitters, &limitFuncSplitter{c: c, limitFunc: c.findL0Limit})
 	}
+	if tableFormat == sstable.TableFormatPebblev3 {
+		outputSplitters = append(outputSplitters,
+			&userKeyChangeSplitter{
+				cmp:      c.cmp,
+				splitter: &fileAndBlobSizeSplitter{maxFileSize: c.maxOutputFileSizeIncludingBlobValueSize},
+				unsafePrevUserKey: func() []byte {
+					// Return the largest point key written to tw or the start of
+					// the current range deletion in the fragmenter, whichever is
+					// greater.
+					prevPoint := prevPointKey.UnsafeKey()
+					if c.cmp(prevPoint.UserKey, c.rangeDelFrag.Start()) > 0 {
+						return prevPoint.UserKey
+					}
+					return c.rangeDelFrag.Start()
+				},
+			})
+	}
 	splitter := &splitterGroup{cmp: c.cmp, splitters: outputSplitters}
 
+	var valueFetchBuf []byte
 	// Each outer loop iteration produces one output file. An iteration that
 	// produces a file containing point keys (and optionally range tombstones)
 	// guarantees that the input iterator advanced. An iteration that produces
@@ -2766,11 +3248,91 @@ func (d *DB) runCompaction(
 			}
 			if tw == nil {
 				if err := newOutput(); err != nil {
-					return nil, pendingOutputs, err
+					return nil, pendingOutputs, pendingBlobOutputs, err
 				}
 			}
-			if err := tw.Add(*key, val); err != nil {
-				return nil, pendingOutputs, err
+			valLen := val.Len()
+			if !shouldBeBlob(key, valLen) {
+				var valueToWrite []byte
+				if val.Fetcher == nil {
+					valueToWrite = val.InPlaceValue()
+				} else {
+					var callerOwned bool
+					valueToWrite, callerOwned, err = val.Value(valueFetchBuf)
+					if err != nil {
+						return nil, pendingOutputs, pendingBlobOutputs, err
+					}
+					if callerOwned {
+						valueFetchBuf = valueToWrite[:0]
+					}
+				}
+				if err := tw.Add(*key, valueToWrite); err != nil {
+					return nil, pendingOutputs, pendingBlobOutputs, err
+				}
+			} else {
+				var valueToWriteToBlobFile []byte
+				reusedReference := false
+				reuseCounter := uint64(0)
+				var fileNum FileNum
+				var valueRef []byte
+				var sa ShortAttribute
+				if val.Fetcher == nil {
+					valueToWriteToBlobFile = val.InPlaceValue()
+				} else {
+					// The val is a reference to a blob file.
+					fileNum, err = sstable.GetFileNumFromValueReferenceToBlob(val)
+					if err != nil {
+						return nil, pendingOutputs, pendingBlobOutputs, err
+					}
+					reusedReference, reuseCounter = c.blobState.reuseReference(fileNum)
+					if reusedReference {
+						valueRef, sa = sstable.ConstructValueReferenceAndShortAttribute(val, valueFetchBuf)
+						valueFetchBuf = valueRef
+					} else {
+						var callerOwned bool
+						valueToWriteToBlobFile, callerOwned, err = val.Value(valueFetchBuf)
+						if err != nil {
+							return nil, pendingOutputs, pendingBlobOutputs, err
+						}
+						if callerOwned {
+							valueFetchBuf = valueToWriteToBlobFile[:0]
+						}
+					}
+				}
+				if !reusedReference {
+					// Write to blob file.
+					// Populate valueRef, fileNum
+					if err := ensureBlobFileWriter(valLen); err != nil {
+						return nil, pendingOutputs, pendingBlobOutputs, err
+					}
+					fileNum = ve.NewBlobFiles[len(ve.NewBlobFiles)-1].Meta.FileNum
+					var la base.LongAttribute
+					if d.opts.Experimental.LongAttributeExtractor != nil {
+						la, err = d.opts.Experimental.LongAttributeExtractor(
+							key.UserKey, d.opts.Comparer.Split(key.UserKey), valueToWriteToBlobFile)
+						if err != nil {
+							return nil, pendingOutputs, pendingBlobOutputs, err
+						}
+					}
+					if d.opts.Experimental.ShortAttributeExtractor != nil {
+						sa, err = d.opts.Experimental.ShortAttributeExtractor(
+							key.UserKey, d.opts.Comparer.Split(key.UserKey), valueToWriteToBlobFile)
+						if err != nil {
+							return nil, pendingOutputs, pendingBlobOutputs, err
+						}
+					}
+					valueRef, err = blobWriter.AddValue(valueToWriteToBlobFile, la)
+					if err != nil {
+						return nil, pendingOutputs, pendingBlobOutputs, err
+					}
+					reuseCounter = 0
+				}
+				tw.AddWithBlobReferenceOptions(*key, valueRef, sstable.AddBlobReferenceOptions{
+					IsBlobReference: true,
+					ShortAttribute:  sa,
+					BlobValueSize:   valLen,
+				})
+				addReferenceToFileMeta(fileNum, valLen, reuseCounter)
 			}
 		}
 
@@ -2798,7 +3360,7 @@ func (d *DB) runCompaction(
 			splitKey = key.UserKey
 		}
 		if err := finishOutput(splitKey); err != nil {
-			return nil, pendingOutputs, err
+			return nil, pendingOutputs, pendingBlobOutputs, err
 		}
 	}
 
@@ -2815,14 +3377,14 @@ func (d *DB) runCompaction(
 	}
 
 	if err := d.dataDir.Sync(); err != nil {
-		return nil, pendingOutputs, err
+		return nil, pendingOutputs, pendingBlobOutputs, err
 	}
 
 	// Refresh the disk available statistic whenever a compaction/flush
 	// completes, before re-acquiring the mutex.
 	_ = d.calculateDiskAvailableBytes()
 
-	return ve, pendingOutputs, nil
+	return ve, pendingOutputs, pendingBlobOutputs, nil
 }
 
 // validateVersionEdit validates that start and end keys across new and deleted
@@ -2879,6 +3441,7 @@ func (d *DB) scanObsoleteFiles(list []string) {
 	manifestFileNum := d.mu.versions.manifestFileNum
 
 	var obsoleteLogs []fileInfo
+	var obsoleteBlobs []fileInfo
 	var obsoleteTables []*fileMetadata
 	var obsoleteManifests []fileInfo
 	var obsoleteOptions []fileInfo
@@ -2889,6 +3452,17 @@ func (d *DB) scanObsoleteFiles(list []string) {
 			continue
 		}
 		switch fileType {
+		case fileTypeBlob:
+			if _, ok := liveFileNums[fileNum]; ok {
+				continue
+			}
+			fi := fileInfo{
+				fileNum: fileNum,
+			}
+			if stat, err := d.opts.FS.Stat(filename); err == nil {
+				fi.fileSize = uint64(stat.Size())
+			}
+			obsoleteBlobs = append(obsoleteBlobs, fi)
 		case fileTypeLog:
 			if fileNum >= minUnflushedLogNum {
 				continue
@@ -2936,7 +3510,8 @@ func (d *DB) scanObsoleteFiles(list []string) {
 	d.mu.log.queue = merge(d.mu.log.queue, obsoleteLogs)
 	d.mu.versions.metrics.WAL.Files += int64(len(obsoleteLogs))
 	d.mu.versions.obsoleteTables = mergeFileMetas(d.mu.versions.obsoleteTables, obsoleteTables)
-	d.mu.versions.incrementObsoleteTablesLocked(obsoleteTables)
+	d.mu.versions.obsoleteBlobFiles = merge(d.mu.versions.obsoleteBlobFiles, obsoleteBlobs)
+	d.mu.versions.incrementObsoleteTablesLocked(obsoleteTables, obsoleteBlobs)
 	d.mu.versions.obsoleteManifests = merge(d.mu.versions.obsoleteManifests, obsoleteManifests)
 	d.mu.versions.obsoleteOptions = merge(d.mu.versions.obsoleteOptions, obsoleteOptions)
 }
@@ -3030,10 +3605,14 @@ type fileInfo struct {
 // re-acquired during the course of this method.
 func (d *DB) doDeleteObsoleteFiles(jobID int) {
 	var obsoleteTables []fileInfo
+	var obsoleteBlobFiles []fileInfo
 
 	defer func() {
 		for _, tbl := range obsoleteTables {
 			delete(d.mu.versions.zombieTables, tbl.fileNum)
+		}
+		for _, blobf := range obsoleteBlobFiles {
+			delete(d.mu.versions.zombieBlobs, blobf.fileNum)
 		}
 	}()
 
@@ -3058,7 +3637,8 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 		})
 	}
 	d.mu.versions.obsoleteTables = nil
-
+	obsoleteBlobFiles = append(obsoleteBlobFiles, d.mu.versions.obsoleteBlobFiles...)
+	d.mu.versions.obsoleteBlobFiles = nil
 	// Sort the manifests cause we want to delete some contiguous prefix
 	// of the older manifests.
 	sort.Slice(d.mu.versions.obsoleteManifests, func(i, j int) bool {
@@ -3084,10 +3664,11 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 	d.mu.Unlock()
 	defer d.mu.Lock()
 
-	files := [4]struct {
+	files := [5]struct {
 		fileType fileType
 		obsolete []fileInfo
 	}{
+		{fileTypeBlob, obsoleteBlobFiles},
 		{fileTypeLog, obsoleteLogs},
 		{fileTypeTable, obsoleteTables},
 		{fileTypeManifest, obsoleteManifests},
@@ -3143,22 +3724,27 @@ func (d *DB) paceAndDeleteObsoleteFiles(jobID int, files []obsoleteFile) {
 
 	for _, of := range files {
 		path := base.MakeFilepath(d.opts.FS, of.dir, of.fileType, of.fileNum)
-		if of.fileType == fileTypeTable {
+		if of.fileType == fileTypeTable || of.fileType == fileTypeBlob {
 			_ = pacer.maybeThrottle(of.fileSize)
 			d.mu.Lock()
-			d.mu.versions.metrics.Table.ObsoleteCount--
-			d.mu.versions.metrics.Table.ObsoleteSize -= of.fileSize
+			if of.fileType == fileTypeTable {
+				d.mu.versions.metrics.Table.ObsoleteCount--
+				d.mu.versions.metrics.Table.ObsoleteSize -= of.fileSize
+			} else if of.fileType == fileTypeBlob {
+				d.mu.versions.metrics.BlobFile.ObsoleteCount--
+				d.mu.versions.metrics.BlobFile.ObsoleteSize -= of.fileSize
+			}
 			d.mu.Unlock()
 		}
 		d.deleteObsoleteFile(of.fileType, jobID, path, of.fileNum)
 	}
 }
 
-func (d *DB) maybeScheduleObsoleteTableDeletion() {
+func (d *DB) maybeScheduleObsoleteTableAndBlobDeletion() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if len(d.mu.versions.obsoleteTables) == 0 {
+	if len(d.mu.versions.obsoleteTables) == 0 && len(d.mu.versions.obsoleteBlobFiles) == 0 {
 		return
 	}
 	if !d.acquireCleaningTurn(false) {
@@ -3188,6 +3774,14 @@ func (d *DB) deleteObsoleteFile(fileType fileType, jobID int, path string, fileN
 	}
 
 	switch fileType {
+	case fileTypeBlob:
+		d.opts.EventListener.BlobFileDeleted(BlobFileDeleteInfo{
+			JobID:   jobID,
+			Path:    path,
+			FileNum: fileNum,
+			Err:     err,
+		},
+		)
 	case fileTypeLog:
 		d.opts.EventListener.WALDeleted(WALDeleteInfo{
 			JobID:   jobID,

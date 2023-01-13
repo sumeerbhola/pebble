@@ -385,6 +385,12 @@ type InternalIteratorStats struct {
 		// blocks) that were retrieved.
 		ValueBytesFetched uint64
 	}
+
+	BlobPointValue struct {
+		Count             uint64
+		ValueBytes        uint64
+		ValueBytesFetched uint64
+	}
 }
 
 // Merge merges the stats in from into the given stats.

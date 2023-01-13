@@ -379,6 +379,28 @@ type LevelOptions struct {
 
 	// The target file size for the level.
 	TargetFileSize int64
+	// TODO(sumeer): these should not use uncompressed blob sizes. For
+	// compactions we can work with configurations that use compressed sizes by
+	// using the compression ratio of the blob files that are inputs to the
+	// compaction. For flushes we can use compression ratios for recent flushes.
+	//
+	// For now, we will run experiments with random values that don't compress.
+	//
+	// When blob files are being written, this is the total size of the sst plus
+	// uncompressed blob value lengths referred to from that sst, to rollover
+	// that sst. With blob file support, make this 5MB for L0 with 2x multiplier
+	// per level below. SSt rollover also rolls over any new blobs being written
+	// by that sst.
+	TargetFileSizeIncludingBlobValueSize int64
+	// We want blobs to be narrower in key space than the ssts, so that when
+	// compactions happen on a level, the number of references to the blob file
+	// do not increase significantly (the theoretical average is ~5 with the 10x
+	// level multiplier). Assuming a key space dominated by blobs,
+	// TargetFileSizeIncludingBlobValueSize will be reached with most of the
+	// bytes being due to blobs. So we could try setting the following value to
+	// 1/3 of TargetFileSizeIncludingBlobValueSize. Can exceed this by 50% due
+	// to the logic in ensureBlobFileWriter.
+	TargetBlobFileSizeBasedOnBlobValueSize int64
 }
 
 // EnsureDefaults ensures that the default values for all of the options have
@@ -407,6 +429,12 @@ func (o *LevelOptions) EnsureDefaults() *LevelOptions {
 	}
 	if o.TargetFileSize <= 0 {
 		o.TargetFileSize = 2 << 20 // 2 MB
+	}
+	if o.TargetFileSizeIncludingBlobValueSize <= 0 {
+		o.TargetFileSizeIncludingBlobValueSize = o.TargetFileSize
+	}
+	if o.TargetBlobFileSizeBasedOnBlobValueSize <= 0 {
+		o.TargetBlobFileSizeBasedOnBlobValueSize = o.TargetFileSizeIncludingBlobValueSize/2 + 1
 	}
 	return o
 }
@@ -615,6 +643,12 @@ type Options struct {
 		// Any change in exclusion behavior takes effect only on future written
 		// sstables, and does not start rewriting existing sstables.
 		RequiredInPlaceValueBound UserKeyPrefixBound
+
+		LongAttributeExtractor base.LongAttributeExtractor
+
+		// Set values > BlobValueSizeThreshold are placed in blob files.
+		// Must be >= 0.
+		BlobValueSizeThreshold int
 	}
 
 	// Filters is a map from filter policy name to filter policy. It is used for
@@ -922,6 +956,15 @@ func (o *Options) EnsureDefaults() *Options {
 				if l.TargetFileSize <= 0 {
 					l.TargetFileSize = o.Levels[i-1].TargetFileSize * 2
 				}
+				if l.TargetFileSizeIncludingBlobValueSize <= 0 {
+					l.TargetFileSizeIncludingBlobValueSize = o.Levels[i-1].TargetFileSizeIncludingBlobValueSize * 2
+					if l.TargetFileSizeIncludingBlobValueSize == 0 {
+						l.TargetFileSizeIncludingBlobValueSize = l.TargetFileSize
+					}
+				}
+				if l.TargetBlobFileSizeBasedOnBlobValueSize <= 0 {
+					l.TargetBlobFileSizeBasedOnBlobValueSize = l.TargetFileSizeIncludingBlobValueSize/2 + 1
+				}
 			}
 			o.Levels[i].EnsureDefaults()
 		}
@@ -994,6 +1037,9 @@ func (o *Options) EnsureDefaults() *Options {
 	if o.Experimental.PointTombstoneWeight == 0 {
 		o.Experimental.PointTombstoneWeight = 1
 	}
+	if o.Experimental.BlobValueSizeThreshold <= 0 {
+		o.Experimental.BlobValueSizeThreshold = 1 << 30
+	}
 
 	o.initMaps()
 	return o
@@ -1040,6 +1086,8 @@ func (o *Options) Level(level int) LevelOptions {
 	l := o.Levels[n]
 	for i := n; i < level; i++ {
 		l.TargetFileSize *= 2
+		l.TargetFileSizeIncludingBlobValueSize *= 2
+		l.TargetBlobFileSizeBasedOnBlobValueSize *= 2
 	}
 	return l
 }

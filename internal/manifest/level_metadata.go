@@ -221,6 +221,15 @@ func (ls *LevelSlice) SizeSum() uint64 {
 	return sum
 }
 
+func (ls *LevelSlice) SizePlusBlobBytesSum() uint64 {
+	var sum uint64
+	iter := ls.Iter()
+	for f := iter.First(); f != nil; f = iter.Next() {
+		sum += f.SizePlusBlobBytes()
+	}
+	return sum
+}
+
 // Reslice constructs a new slice backed by the same underlying level, with
 // new start and end positions. Reslice invokes the provided function, passing
 // two LevelIterators: one positioned to i's inclusive start and one

@@ -17,6 +17,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/bloom"
 	"github.com/cockroachdb/pebble/internal/cache"
+	"github.com/cockroachdb/pebble/internal/manifest"
 	"github.com/cockroachdb/pebble/internal/testkeys"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
@@ -63,6 +64,11 @@ func parseOptions(opts *testOptions, data string) error {
 			case "TestOptions.enable_value_blocks":
 				opts.enableValueBlocks = true
 				opts.opts.Experimental.EnableValueBlocks = func() bool { return true }
+				opts.opts.Levels = make([]pebble.LevelOptions, manifest.NumLevels)
+				for i := range opts.opts.Levels {
+					opts.opts.Levels[i].TargetBlobFileSizeBasedOnBlobValueSize = 40
+				}
+				opts.opts.Experimental.BlobValueSizeThreshold = 1
 				return true
 			case "TestOptions.async_apply_to_db":
 				opts.asyncApplyToDB = true

@@ -188,6 +188,8 @@ type fileInterval struct {
 	// intervals, we assume an equal distribution of bytes across all those
 	// intervals.
 	estimatedBytes uint64
+
+	estimatedBytesPlusBlobBytes uint64
 }
 
 // Helper type for any cases requiring a bool slice.
@@ -400,6 +402,7 @@ func mergeIntervals(
 				// estimatedBytes gets recalculated later on, as the number of intervals
 				// the file bytes are interpolated over has changed.
 				estimatedBytes: 0,
+				estimatedBytesPlusBlobBytes: 0,
 				// Copy the below attributes from prevInterval.
 				files:                         append([]*FileMetadata(nil), prevInterval.files...),
 				isBaseCompacting:              prevInterval.isBaseCompacting,
@@ -586,9 +589,11 @@ func (s *L0Sublevels) AddL0Files(
 				for i := f.minIntervalIndex; i <= f.maxIntervalIndex; i++ {
 					if oldToNewMap[j] == i {
 						newVal.orderedIntervals[i].estimatedBytes -= f.Size / uint64(oldIntervalDelta)
+						newVal.orderedIntervals[i].estimatedBytesPlusBlobBytes -= f.SizePlusBlobBytes() / uint64(oldIntervalDelta)
 						j++
 					}
 					newVal.orderedIntervals[i].estimatedBytes += f.Size / uint64(newIntervalDelta)
+					newVal.orderedIntervals[i].estimatedBytesPlusBlobBytes += f.SizePlusBlobBytes() / uint64(newIntervalDelta)
 				}
 			}
 		})
@@ -653,6 +658,7 @@ func (s *L0Sublevels) addFileToSublevels(f *FileMetadata, checkInvariant bool) e
 	// TODO(bilal): Call EstimateDiskUsage in sstable.Reader with interval
 	// bounds to get a better estimate for each interval.
 	interpolatedBytes := f.Size / uint64(f.maxIntervalIndex-f.minIntervalIndex+1)
+	interpolatedBytesPlusBlobBytes := f.SizePlusBlobBytes() / uint64(f.maxIntervalIndex-f.minIntervalIndex+1)
 	s.fileBytes += f.Size
 	subLevel := 0
 	// Update state in every fileInterval for this file.
@@ -668,6 +674,7 @@ func (s *L0Sublevels) addFileToSublevels(f *FileMetadata, checkInvariant bool) e
 			subLevel = interval.files[len(interval.files)-1].SubLevel + 1
 		}
 		interval.estimatedBytes += interpolatedBytes
+		interval.estimatedBytesPlusBlobBytes += interpolatedBytesPlusBlobBytes
 		if f.minIntervalIndex < interval.filesMinIntervalIndex {
 			interval.filesMinIntervalIndex = f.minIntervalIndex
 		}
@@ -701,7 +708,7 @@ func (s *L0Sublevels) calculateFlushSplitKeys(flushSplitMaxBytes int64) {
 			s.flushSplitUserKeys = append(s.flushSplitUserKeys, interval.startKey.key)
 			cumulativeBytes = 0
 		}
-		cumulativeBytes += s.orderedIntervals[i].estimatedBytes
+		cumulativeBytes += s.orderedIntervals[i].estimatedBytesPlusBlobBytes
 	}
 }
 

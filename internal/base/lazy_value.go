@@ -40,8 +40,10 @@ type ShortAttributeExtractor func(
 // AttributeAndLen represents the pair of value length and the short
 // attribute.
 type AttributeAndLen struct {
-	ValueLen       int32
-	ShortAttribute ShortAttribute
+	ValueLen               int32
+	ShortAttribute         ShortAttribute
+	LongAttributeExtracted bool
+	LongAttribute          LongAttribute
 }
 
 // LazyValue represents a value that may not already have been extracted.
@@ -184,6 +186,9 @@ type ValueFetcher interface {
 		handle []byte, valLen int32, buf []byte) (val []byte, callerOwned bool, err error)
 }
 
+type LongAttributeFetcher interface {
+}
+
 // Value returns the underlying value.
 func (lv *LazyValue) Value(buf []byte) (val []byte, callerOwned bool, err error) {
 	if lv.Fetcher == nil {
@@ -238,6 +243,22 @@ func (lv *LazyValue) TryGetShortAttribute() (ShortAttribute, bool) {
 	return lv.Fetcher.Attribute.ShortAttribute, true
 }
 
+// TODO(sumeer): use for clock timestamp.
+
+type LongAttribute []byte
+
+const LongAttributeMaxLen = 24
+
+type LongAttributeExtractor func(
+	key []byte, keyPrefixLen int, value []byte) (LongAttribute, error)
+
+func (lv *LazyValue) TryGetLongAttribute() (LongAttribute, bool) {
+	if lv.Fetcher == nil {
+		return nil, false
+	}
+	return lv.Fetcher.Attribute.LongAttribute, lv.Fetcher.Attribute.LongAttributeExtracted
+}
+
 // Clone creates a stable copy of the LazyValue, by appending bytes to buf.
 // The fetcher parameter must be non-nil and may be over-written and used
 // inside the returned LazyValue -- this is needed to avoid an allocation.
@@ -265,6 +286,11 @@ func (lv *LazyValue) Clone(buf []byte, fetcher *LazyFetcher) (LazyValue, []byte)
 			Fetcher:   lv.Fetcher.Fetcher,
 			Attribute: lv.Fetcher.Attribute,
 			// Not copying anything that has been extracted.
+		}
+		if lv.Fetcher.Attribute.LongAttributeExtracted {
+			bufLen := len(buf)
+			buf = append(buf, lv.Fetcher.Attribute.LongAttribute...)
+			fetcher.Attribute.LongAttribute = buf[bufLen : bufLen+len(lv.Fetcher.Attribute.LongAttribute)]
 		}
 		lvCopy.Fetcher = fetcher
 	}
