@@ -740,6 +740,8 @@ func AccumulateIncompleteAndApplySingleVE(
 	return v, zombies, nil
 }
 
+var ApplyCalledAddL0Files = false
+
 // Apply applies the delta b to the current version to produce a new
 // version. The new version is consistent with respect to the comparer cmp.
 //
@@ -758,6 +760,7 @@ func (b *BulkVersionEdit) Apply(
 	readCompactionRate int64,
 	zombies map[base.DiskFileNum]uint64,
 ) (*Version, error) {
+	ApplyCalledAddL0Files = false
 	addZombie := func(state *FileBacking) {
 		if zombies != nil {
 			zombies[state.DiskFileNum] = state.Size
@@ -919,6 +922,7 @@ func (b *BulkVersionEdit) Apply(
 				var err error
 				// AddL0Files requires addedFiles to be sorted in seqnum order.
 				SortBySeqNum(addedFiles)
+				ApplyCalledAddL0Files = true
 				v.L0Sublevels, err = curr.L0Sublevels.AddL0Files(addedFiles, flushSplitBytes, &v.Levels[0])
 				if errors.Is(err, errInvalidL0SublevelsOpt) {
 					err = v.InitL0Sublevels(cmp, formatKey, flushSplitBytes)
