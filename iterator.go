@@ -1254,8 +1254,8 @@ func (i *Iterator) SeekGEWithLimit(key []byte, limit []byte) IterValidityState {
 	// a performance win more generally, so we restrict it to external iterators
 	// that are configured to only use forward positioning operations.
 	//
-	// TODO(jackson): This optimization should be obsolete once we introduce and
-	// use the NextPrefix iterator positioning operation.
+	// This optimization should be mostly obsolete for CockroachDB due to the
+	// use of the NextPrefix iterator positioning operation.
 	if seekInternalIter && i.forwardOnly && lastPositioningOp != invalidatedLastPositionOp &&
 		i.pos == iterPosCurForward && !hasPrefix && i.iterValidityState == IterValid &&
 		i.cmp(key, i.iterKey.UserKey) > 0 {
