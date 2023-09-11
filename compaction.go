@@ -534,6 +534,53 @@ func initCompactionBlobFileState(c *compaction) {
 			}
 		}
 		for fileNum, f := range blobMap {
+			// TODO:
+			// Rewrite this whole comment
+			//
+			// Multiple problems.
+			// Small blob file size.
+			// Space amp.
+			// Handling of dels and rangedels.
+			//.....
+			//
+			// We have to rewrite all blobs for an sstable at the same time, else we
+			// have small blobs. There is no need to disallow sharing of blobs
+			// across levels, since rewriting unnecessarily just creates more space
+			// amp. And does not fix the small file problem.
+			//
+			// Read amp for a sst wrt blobs is a good way to drive rewrite for whole
+			// sst. Actually the decision needs to made for whole compaction.
+			//
+			// What about space amp due to dels and rangedels. Space amp at the
+			// level of an sst is not a good metric. We want space amp at the level
+			// of the DB. Know total value size across all reffed blobs. Add to it
+			// when new blob created. Subtract when blob becomes zombie. Total
+			// reffed value size is also something we can incrementally track.
+			//
+			// Ratio is space amp. Rangedels and dels will get properly represented
+			// in this space amp.
+			//
+			// Global blob space amp metric
+			// Per blob space amp metric
+			// Neither stored but can be calculated at DB open and then maintained incrementally.
+			//
+			// Can construct weighted space amp of input blobs for a compaction if
+			// have decided not to rewrite due to stack depth.
+			//
+			// Say instead of space amp we are talking about live fraction. Say live
+			// fraction is 0.8 globally. Then some blobs will be lower than 0.8 and
+			// some higher. Say Goal is 0.8. And below goal, want to prioritize the
+			// lowest ones first. We can bucket into 0.1, 0.2, ... etc, but those
+			// are individual blobs and not for the group of blobs involved in a
+			// compaction. Could say any compaction with less than 0.8 - 0.1*0.8
+			// gets rewrite. For all the blobs referenced by a sst, compute sum of
+			// garbage across the blobs. To maintain incrementally since need to
+			// update it for ssts that are not involved in compaction, use a reverse
+			// index on blob references.
+			//
+			// Then maintain an btree annotation that identifies ssts with the
+			// highest such value. Rewrite them if have spare capacity.
+
 			// TODO: reduce this wasteThreshold in some experiments to see if it
 			// reduces write amp.
 			// TODO: don't need to reduce waste threshold since don't really have this

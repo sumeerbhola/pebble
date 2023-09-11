@@ -390,6 +390,11 @@ type InternalIteratorStats struct {
 		Count             uint64
 		ValueBytes        uint64
 		ValueBytesFetched uint64
+
+		CachedVBRHit uint64
+		CachedVBRMissInit uint64
+		CachedVBRMissNotInit uint64
+		CacheVBREvictCount uint64
 	}
 }
 

@@ -1448,13 +1448,13 @@ func TestWriteAmpWithBlobs(t *testing.T) {
 		require.NoError(t, d.Apply(b, nil))
 
 	}
-	waitForLowScore := func() {
+	waitForLowScore := func(scoreThreshold float64) {
 		done := false
 		for !done {
 			m := d.Metrics()
 			done = true
 			for i := range m.Levels {
-				if m.Levels[i].Score > 2 {
+				if m.Levels[i].Score > scoreThreshold {
 					time.Sleep(time.Second)
 					done = false
 					break
@@ -1470,7 +1470,7 @@ func TestWriteAmpWithBlobs(t *testing.T) {
 			metrics := d.Metrics()
 			fmt.Printf("keys: %d\n%s\n", numKeysWritten, metrics.String())
 			fmt.Printf("\nblobs\n%s\n", d.BlobsDebugString())
-			waitForLowScore()
+			waitForLowScore(2.0)
 		}
 	}
 	for i := 0; i < numLevels; i++ {
@@ -1478,7 +1478,19 @@ func TestWriteAmpWithBlobs(t *testing.T) {
 			humanize.SI.Uint64(atomic.LoadUint64(&BlobFileCreationCount[i])),
 			humanize.SI.Uint64(atomic.LoadUint64(&BlobFileRolloverCountDueToSize[i])))
 	}
+	waitForLowScore(1.1)
 	notReuseDBReasons.log(d.opts.Logger)
+
+	iter := d.NewIter(&IterOptions{KeyTypes: IterKeyTypePointsOnly})
+	hasPoint := iter.First()
+	pointCount := 0
+	for hasPoint {
+		pointCount++
+		hasPoint = iter.Next()
+	}
+	require.Equal(t, int(numKeysWritten), int(pointCount))
+	d.opts.Logger.Infof("%+v", iter.Stats())
+	iter.Close()
 	d.Close()
 
 }

@@ -496,8 +496,10 @@ func (l *cacheValue) remove(cv *cacheValue) {
 // operating on (or whether it is working with a blob file or the value blocks
 // in a sstable).
 type blobFileReaderProvider struct {
+	// Implemented by BlobFileReaderCache.
 	readersProvider ProviderOfReaderForBlobFiles
 	fileNum         base.FileNum
+	// Implemented by cacheValue
 	reader          blobFileReaderInterface
 }
 
@@ -621,7 +623,11 @@ func (r *blobValueReader) Fetch(
 	}
 	r.fetchCount++
 	vbr.lastFetchCount = r.fetchCount
-	return vbr.vbr.Fetch(handle, valLen, buf)
+	val, callerOwned, err = vbr.vbr.Fetch(handle, valLen, buf)
+	if r.stats != nil {
+		r.stats.BlobPointValue.ValueBytesFetched += uint64(len(val))
+	}
+	return
 }
 
 func (r *blobValueReader) getCachedValueBlockReader(
@@ -637,6 +643,9 @@ func (r *blobValueReader) getCachedValueBlockReader(
 			break
 		}
 		if fn == fileNum {
+			if r.stats != nil {
+				r.stats.BlobPointValue.CachedVBRHit++
+			}
 			return &r.vbrs[i], nil
 		}
 		if r.vbrs[i].lastFetchCount < oldestFetchCount {
@@ -645,6 +654,10 @@ func (r *blobValueReader) getCachedValueBlockReader(
 		}
 	}
 	if i >= n {
+		if r.stats != nil {
+			r.stats.BlobPointValue.CacheVBREvictCount++
+			r.stats.BlobPointValue.CachedVBRMissNotInit++
+		}
 		// Replace the cached index i.
 		i = oldestFetchIndex
 		if !r.closed {
@@ -652,6 +665,10 @@ func (r *blobValueReader) getCachedValueBlockReader(
 			r.vbrs[i].vbr.close()
 		}
 		r.vbrs[i] = cachedValueBlockReader{}
+	} else {
+		if r.stats != nil {
+			r.stats.BlobPointValue.CachedVBRMissInit++
+		}
 	}
 	rp := &blobFileReaderProvider{
 		readersProvider: r.provider,
