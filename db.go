@@ -298,6 +298,8 @@ type DB struct {
 	dataDir  vfs.File
 	walDir   vfs.File
 
+	debugPrintMutex sync.Mutex
+
 	tableCache           *tableCacheContainer
 	newIters             tableNewIters
 	tableNewRangeKeyIter keyspan.TableNewSpanIter

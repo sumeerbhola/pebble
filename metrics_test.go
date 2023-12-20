@@ -116,6 +116,17 @@ func TestMetrics(t *testing.T) {
 	// ingests.
 	opts.MemTableStopWritesThreshold = 4
 
+	opts.Experimental.IneffectualSingleDeleteCallback = func(userKey []byte) {
+		fmt.Printf("ineffectual callback for %s\n", string(userKey))
+	}
+	opts.Experimental.PrintPointCallback = func(k *InternalKey, v []byte) {
+		fmt.Printf("%s.%s#%d = %s\n", string(k.UserKey), k.Kind().String(), k.SeqNum(), string(v))
+	}
+
+	opts.Experimental.PrintRangeDelCallback = func(start []byte, end []byte, seqNum uint64) {
+		fmt.Printf("[%s, %s)#%d\n", string(start), string(end), seqNum)
+	}
+
 	d, err := Open("", opts)
 	require.NoError(t, err)
 	defer func() {

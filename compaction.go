@@ -14,6 +14,8 @@ import (
 	"runtime/pprof"
 	"slices"
 	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -555,6 +557,85 @@ func rangeKeyCompactionTransform(
 	})
 }
 
+func (c *compaction) printLSM(banner string, onlyCompactionInput bool) {
+	if c.printOptions.newIters == nil || c.printOptions.pointCallback == nil {
+		return
+	}
+	c.printOptions.mu.Lock()
+	defer c.printOptions.mu.Unlock()
+	fileMap := map[base.FileNum]struct{}{}
+	for i := range c.inputs {
+		it := c.inputs[i].files.Iter()
+		for f := it.First(); f != nil; f = it.Next() {
+			fileMap[f.FileNum] = struct{}{}
+		}
+	}
+	if len(banner) != 0 {
+		fmt.Printf("%s\n", banner)
+	}
+	v := c.version
+	iterateFiles := func(levelStr string, iter manifest.LevelIterator) {
+		for t := iter.First(); t != nil; t = iter.Next() {
+			func() {
+				iter, rangeDelIter, err := c.printOptions.newIters(
+					context.Background(), t, &IterOptions{}, internalIterOpts{})
+				if err != nil {
+					panic(err.Error())
+				}
+				if iter != nil {
+					defer iter.Close()
+				}
+				if rangeDelIter != nil {
+					defer rangeDelIter.Close()
+				}
+				compactingStr := ""
+				if _, ok := fileMap[t.FileNum]; ok {
+					compactingStr = "(compacting)"
+				} else if onlyCompactionInput {
+					return
+				}
+				fmt.Printf("\nfile %d(%s)%s\n", t.FileNum, levelStr, compactingStr)
+				fmt.Printf(" bounds:\n")
+				c.printOptions.pointCallback(&t.SmallestPointKey, nil)
+				c.printOptions.pointCallback(&t.LargestPointKey, nil)
+				fmt.Printf(" contents:\n")
+				if iter != nil {
+					k, v := iter.First()
+					for ; k != nil; k, v = iter.Next() {
+						value, _, err := v.Value(nil)
+						if err != nil {
+							panic(err.Error())
+						}
+						c.printOptions.pointCallback(k, value)
+					}
+				}
+				if rangeDelIter != nil {
+					for span := rangeDelIter.First(); span != nil; span = rangeDelIter.Next() {
+						for i := range span.Keys {
+							c.printOptions.rangeDelCallback(
+								span.Start, span.End, base.SeqNumFromTrailer(span.Keys[i].Trailer))
+						}
+					}
+				}
+			}()
+		}
+	}
+	if n := len(v.L0SublevelFiles); n > 0 {
+		for i := n - 1; i >= 0; i-- {
+			iter := v.L0SublevelFiles[i].Iter()
+			levelStr := fmt.Sprintf("L0.%d", i)
+			fmt.Printf("\n%s\n", levelStr)
+			iterateFiles(levelStr, iter)
+		}
+	}
+	for i := 1; i < len(v.Levels); i++ {
+		iter := v.Levels[i].Iter()
+		levelStr := fmt.Sprintf("L%d", i)
+		fmt.Printf("\n%s\n", levelStr)
+		iterateFiles(levelStr, iter)
+	}
+}
+
 // compaction is a table compaction from one level to the next, starting from a
 // given version.
 type compaction struct {
@@ -668,6 +749,15 @@ type compaction struct {
 	metrics map[int]*LevelMetrics
 
 	pickerMetrics compactionPickerMetrics
+
+	printOptions
+}
+
+type printOptions struct {
+	newIters tableNewIters
+	pointCallback func(k *InternalKey, v []byte)
+	rangeDelCallback func(start []byte, end []byte, seqNum uint64)
+	mu *sync.Mutex
 }
 
 func (c *compaction) makeInfo(jobID int) CompactionInfo {
@@ -2441,6 +2531,12 @@ func (d *DB) maybeScheduleCompactionPicker(
 		pc, retryLater := pickManualCompaction(v, d.opts, env, d.mu.versions.picker.getBaseLevel(), manual)
 		if pc != nil {
 			c := newCompaction(pc, d.opts, d.timeNow(), d.ObjProvider())
+			c.printOptions = printOptions{
+				newIters:         d.newIters,
+				pointCallback:    d.opts.Experimental.PrintPointCallback,
+				rangeDelCallback: d.opts.Experimental.PrintRangeDelCallback,
+				mu: &d.debugPrintMutex,
+			}
 			d.mu.compact.manual = d.mu.compact.manual[1:]
 			d.mu.compact.compactingCount++
 			d.addInProgressCompaction(c)
@@ -2468,6 +2564,12 @@ func (d *DB) maybeScheduleCompactionPicker(
 			break
 		}
 		c := newCompaction(pc, d.opts, d.timeNow(), d.ObjProvider())
+		c.printOptions = printOptions{
+			newIters:         d.newIters,
+			pointCallback:    d.opts.Experimental.PrintPointCallback,
+			rangeDelCallback: d.opts.Experimental.PrintRangeDelCallback,
+			mu: &d.debugPrintMutex,
+		}
 		d.mu.compact.compactingCount++
 		d.addInProgressCompaction(c)
 		go d.compact(c, nil)
@@ -2980,6 +3082,7 @@ func (d *DB) runCompaction(
 		ve := &versionEdit{
 			DeletedFiles: map[deletedFileEntry]*fileMetadata{},
 		}
+		var buf strings.Builder
 		for _, cl := range c.inputs {
 			levelMetrics := &LevelMetrics{}
 			iter := cl.files.Iter()
@@ -2988,9 +3091,13 @@ func (d *DB) runCompaction(
 					Level:   cl.level,
 					FileNum: f.FileNum,
 				}] = f
+				fmt.Fprintf(&buf, " file %d", f.FileNum)
 			}
 			c.metrics[cl.level] = levelMetrics
 		}
+		d.debugPrintMutex.Lock()
+		defer d.debugPrintMutex.Unlock()
+		fmt.Printf("\n####### Delete Only Compaction ########\n%s\n", buf.String())
 		return ve, nil, stats, nil
 	}
 
@@ -3107,6 +3214,10 @@ func (d *DB) runCompaction(
 		c.elideRangeTombstone, d.opts.Experimental.IneffectualSingleDeleteCallback,
 		d.opts.Experimental.SingleDeleteInvariantViolationCallback,
 		d.FormatMajorVersion())
+	iter.printLSM = func() {
+		c.printLSM("\n######### Dump ##########", false)
+	}
+	c.printLSM("\n######## Compaction ########", false)
 
 	var (
 		createdFiles    []base.DiskFileNum

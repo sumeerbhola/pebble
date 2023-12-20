@@ -728,6 +728,9 @@ type Options struct {
 		//   which will later be consumed by SingleDelete#3. The violation will
 		//   not be detected and the DB will be correct.
 		SingleDeleteInvariantViolationCallback func(userKey []byte)
+
+		PrintPointCallback func(k *InternalKey, v []byte)
+		PrintRangeDelCallback func(start []byte, end []byte, seqNum uint64)
 	}
 
 	// Filters is a map from filter policy name to filter policy. It is used for

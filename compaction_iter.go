@@ -269,6 +269,8 @@ type compactionIter struct {
 		// count of DELSIZED keys that were missized.
 		countMissizedDels uint64
 	}
+
+	printLSM func()
 }
 
 func newCompactionIter(
@@ -954,6 +956,10 @@ func (i *compactionIter) singleDeleteNext() bool {
 		case InternalKeyKindDelete, InternalKeyKindSetWithDelete, InternalKeyKindDeleteSized:
 			if (kind == InternalKeyKindDelete || kind == InternalKeyKindDeleteSized) &&
 				i.ineffectualSingleDeleteCallback != nil {
+				if i.printLSM != nil {
+					i.printLSM()
+					i.printLSM = nil
+				}
 				i.ineffectualSingleDeleteCallback(i.key.UserKey)
 			}
 			// We've hit a Delete, DeleteSized, SetWithDelete, transform
@@ -1011,6 +1017,10 @@ func (i *compactionIter) singleDeleteNext() bool {
 			// Two single deletes met in a compaction. The first single delete is
 			// ineffectual.
 			if i.ineffectualSingleDeleteCallback != nil {
+				if i.printLSM != nil {
+					i.printLSM()
+					i.printLSM = nil
+				}
 				i.ineffectualSingleDeleteCallback(i.key.UserKey)
 			}
 			// Continue to apply the second single delete.
@@ -1048,6 +1058,10 @@ func (i *compactionIter) skipDueToSingleDeleteElision() {
 			// hasn't elided any other keys. The single delete was ineffectual (a
 			// no-op).
 			if i.ineffectualSingleDeleteCallback != nil {
+				if i.printLSM != nil {
+					i.printLSM()
+					i.printLSM = nil
+				}
 				i.ineffectualSingleDeleteCallback(i.key.UserKey)
 			}
 			i.skip = false
@@ -1080,6 +1094,10 @@ func (i *compactionIter) skipDueToSingleDeleteElision() {
 			switch kind {
 			case InternalKeyKindDelete, InternalKeyKindDeleteSized, InternalKeyKindSingleDelete:
 				if i.ineffectualSingleDeleteCallback != nil {
+					if i.printLSM != nil {
+						i.printLSM()
+						i.printLSM = nil
+					}
 					i.ineffectualSingleDeleteCallback(i.key.UserKey)
 				}
 				switch kind {
