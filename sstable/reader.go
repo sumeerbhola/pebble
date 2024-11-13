@@ -489,6 +489,138 @@ func DeterministicReadBlockDurationForTesting() func() {
 
 var deterministicReadBlockDurationForTesting = false
 
+type CacheInterface interface {
+	GetOrPopulate(
+		id cache.ID, fileNum base.DiskFileNum, offset uint64, loadBlockSema *fifo.Semaphore,
+		f func(errDuration time.Duration) (*cache.Value, error)) (cache.Handle, error)
+}
+
+// 123 LOC, versus 124LOC for readBlockInternal.
+func (r *Reader) readBlockInternal2(
+	ctx context.Context,
+	env readBlockEnv,
+	readHandle objstorage.ReadHandle,
+	bh block.Handle,
+	initBlockMetadataFn func(*block.Metadata, []byte) error,
+) (block.BufferHandle, error) {
+	var c CacheInterface
+	// ** called is additional tracking variable because of callback pattern of f.
+	var called bool
+	f := func(errorDuration time.Duration) (block.Value, error) {
+		called = true
+		if errorDuration > 5*time.Millisecond && r.logger.IsTracingEnabled(ctx) {
+			r.logger.Eventf(
+				ctx, "waited for turn when %s time wasted by failed reads", errorDuration.String())
+		}
+		// TODO(sumeer): consider tracing when waited longer than some duration
+		// for turn to do the read.
+		if env.BufferPool != nil {
+			// The compaction path uses env.BufferPool, and does not coordinate read
+			// using a cache.ReadHandle. This is ok since only a single compaction is
+			// reading a block.
+			if sema := r.loadBlockSema; sema != nil {
+				if err := sema.Acquire(ctx, 1); err != nil {
+					// An error here can only come from the context.
+					return block.Value{}, err
+				}
+				defer sema.Release(1)
+			}
+		}
+		// Else loadBlockSema, if non-nil, has already been acquired.
+
+		compressed := block.Alloc(int(bh.Length+block.TrailerLen), env.BufferPool)
+		readStopwatch := makeStopwatch()
+		var err error
+		if readHandle != nil {
+			err = readHandle.ReadAt(ctx, compressed.BlockData(), int64(bh.Offset))
+		} else {
+			err = r.readable.ReadAt(ctx, compressed.BlockData(), int64(bh.Offset))
+		}
+		readDuration := readStopwatch.stop()
+		// Call IsTracingEnabled to avoid the allocations of boxing integers into an
+		// interface{}, unless necessary.
+		if readDuration >= slowReadTracingThreshold && r.logger.IsTracingEnabled(ctx) {
+			_, file1, line1, _ := runtime.Caller(1)
+			_, file2, line2, _ := runtime.Caller(2)
+			r.logger.Eventf(ctx, "reading block of %d bytes took %s (fileNum=%s; %s/%s:%d -> %s/%s:%d)",
+				int(bh.Length+block.TrailerLen), readDuration.String(),
+				r.cacheOpts.FileNum,
+				filepath.Base(filepath.Dir(file2)), filepath.Base(file2), line2,
+				filepath.Base(filepath.Dir(file1)), filepath.Base(file1), line1)
+		}
+		if err != nil {
+			compressed.Release()
+			return block.Value{}, err
+		}
+		env.BlockRead(bh.Length, readDuration)
+		if err = checkChecksum(r.checksumType, compressed.BlockData(), bh, r.cacheOpts.FileNum); err != nil {
+			compressed.Release()
+			return block.Value{}, err
+		}
+
+		typ := block.CompressionIndicator(compressed.BlockData()[bh.Length])
+		compressed.Truncate(int(bh.Length))
+
+		var decompressed block.Value
+		if typ == block.NoCompressionIndicator {
+			decompressed = compressed
+		} else {
+			// Decode the length of the decompressed value.
+			var decodedLen, prefixLen int
+			decodedLen, prefixLen, err = block.DecompressedLen(typ, compressed.BlockData())
+			if err != nil {
+				compressed.Release()
+				return block.Value{}, err
+			}
+
+			decompressed = block.Alloc(decodedLen, env.BufferPool)
+			err = block.DecompressInto(typ, compressed.BlockData()[prefixLen:], decompressed.BlockData())
+			compressed.Release()
+			if err != nil {
+				decompressed.Release()
+				return block.Value{}, err
+			}
+		}
+		if err = initBlockMetadataFn(decompressed.BlockMetadata(), decompressed.BlockData()); err != nil {
+			decompressed.Release()
+			return block.Value{}, err
+		}
+		return decompressed, nil
+	}
+	if !called {
+		// Cache hit.
+		if readHandle != nil {
+			readHandle.RecordCacheHit(ctx, int64(bh.Offset), int64(bh.Length+block.TrailerLen))
+		}
+		env.BlockServedFromCache(bh.Length)
+	}
+	var ch cache.Handle
+	if env.BufferPool == nil {
+		ch, err := c.GetOrPopulate(
+			r.cacheOpts.CacheID, r.cacheOpts.FileNum, bh.Offset, r.loadBlockSema,
+			func(errDuration time.Duration) (*cache.Value, error) {
+				v, err := f(errDuration)
+				if err != nil {
+					return nil, err
+				}
+				// ** GetCacheValue is slightly abstraction breaking.
+				return v.GetCacheValue(), nil
+			})
+		if err != nil {
+			return block.BufferHandle{}, err
+		}
+		return block.CacheBufferHandle(ch), nil
+	} else {
+		ch = r.cacheOpts.Cache.Get(r.cacheOpts.CacheID, r.cacheOpts.FileNum, bh.Offset)
+		if ch.Valid() {
+			// ** code duplication.
+			return block.CacheBufferHandle(ch), nil
+		}
+		v, err := f(0)
+		return block.BufBufferHandle(v), err
+	}
+}
+
 // readBlockInternal should not be used directly; one of the read*Block methods
 // should be used instead.
 func (r *Reader) readBlockInternal(
@@ -531,7 +663,7 @@ func (r *Reader) readBlockInternal(
 			return block.BufferHandle{}, err
 		}
 		if ch.Valid() {
-			return block.MakeHandleWithCacheHandle(ch), nil
+			return block.CacheBufferHandle(ch), nil
 		}
 		// TODO(sumeer): consider tracing when waited longer than some duration
 		// for turn to do the read.

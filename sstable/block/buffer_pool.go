@@ -71,10 +71,6 @@ func (b Value) SetInCacheAndReleaseForTesting(
 	h.Release()
 }
 
-func MakeHandleWithCacheHandle(h cache.Handle) BufferHandle {
-	return BufferHandle{h: h}
-}
-
 // Release releases the handle.
 func (b Value) Release() {
 	if b.buf.Valid() {
@@ -82,6 +78,10 @@ func (b Value) Release() {
 	} else {
 		cache.Free(b.v)
 	}
+}
+
+func (b Value) GetCacheValue() *cache.Value {
+	return b.v
 }
 
 // Truncate truncates the block to n bytes.
@@ -100,6 +100,10 @@ func (b Value) Truncate(n int) {
 type BufferHandle struct {
 	h cache.Handle
 	b Buf
+}
+
+func BufBufferHandle(b Value) BufferHandle {
+	return BufferHandle{b: b.buf}
 }
 
 // CacheBufferHandle constructs a BufferHandle from a block cache Handle.
