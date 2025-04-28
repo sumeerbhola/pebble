@@ -706,6 +706,7 @@ type compactionPickerByScore struct {
 	// levelMaxBytes holds the dynamically adjusted max bytes setting for each
 	// level.
 	levelMaxBytes [numLevels]int64
+	dbSizeBytes   uint64
 }
 
 var _ compactionPicker = &compactionPickerByScore{}
@@ -817,7 +818,10 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 		p.levelMaxBytes[level] = math.MaxInt64
 	}
 
-	if dbSize == 0 {
+	dbSizeBelowL0 := dbSize
+	dbSize += p.vers.Levels[0].Size()
+	p.dbSizeBytes = dbSize
+	if dbSizeBelowL0 == 0 {
 		// No levels for L1 and up contain any data. Target L0 compactions for the
 		// last level or to the level to which there is an ongoing L0 compaction.
 		p.baseLevel = numLevels - 1
@@ -828,6 +832,7 @@ func (p *compactionPickerByScore) initLevelMaxBytes(inProgressCompactions []comp
 	}
 
 	dbSize += p.vers.Levels[0].Size()
+	p.dbSizeBytes = dbSize
 	bottomLevelSize := dbSize - dbSize/uint64(p.opts.Experimental.LevelMultiplier)
 
 	curLevelSize := bottomLevelSize
@@ -1252,7 +1257,20 @@ func (p *compactionPickerByScore) getCompactionConcurrency() int {
 		compactionDebt := p.estimatedCompactionDebt(0)
 		compactionDebtCompactions = int(compactionDebt/p.opts.Experimental.CompactionDebtConcurrency) + 1
 	}
-	return max(min(maxConcurrentCompactions, max(l0ReadAmpCompactions, compactionDebtCompactions)), 1)
+	// Concurrency based on L0 read-amp and compaction debt.
+	concurrency :=
+		max(min(maxConcurrentCompactions, max(l0ReadAmpCompactions, compactionDebtCompactions)), 1)
+	unusedConcurrency := maxConcurrentCompactions - concurrency
+	garbageFractionLimit := p.opts.Experimental.CompactionGarbageFractionForMaxConcurrency()
+	if unusedConcurrency > 0 && garbageFractionLimit > 0 && p.dbSizeBytes > 0 {
+		compactableGarbageBytes :=
+			*pointDeletionsBytesEstimateAnnotator.MultiLevelAnnotation(p.vers.Levels[:]) +
+				*rangeDeletionsBytesEstimateAnnotator.MultiLevelAnnotation(p.vers.Levels[:])
+		garbageFraction := float64(compactableGarbageBytes) / float64(p.dbSizeBytes)
+		concurrency +=
+			min(int((garbageFraction/garbageFractionLimit)*float64(unusedConcurrency)), unusedConcurrency)
+	}
+	return concurrency
 }
 
 // TODO(sumeer): remove unless someone actually finds this useful.
