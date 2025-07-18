@@ -831,6 +831,28 @@ func (d *diskHealthCheckingFS) OpenDir(name string) (File, error) {
 	}, nil
 }
 
+// OpenDirectIO implements the FS interface.
+func (d *diskHealthCheckingFS) OpenDirectIO(name string, flag int, perm os.FileMode) (File, error) {
+	f, err := d.fs.OpenDirectIO(name, flag, perm)
+	if err != nil {
+		return f, err
+	}
+	if d.diskSlowThreshold == 0 {
+		return f, nil
+	}
+	checkingFile := newDiskHealthCheckingFile(f, d.diskSlowThreshold, WriteCategoryUnspecified, d.statsCollector,
+		func(opType OpType, writeSizeInBytes int, duration time.Duration) {
+			d.onSlowDisk(
+				DiskSlowInfo{
+					Path:      name,
+					OpType:    opType,
+					WriteSize: writeSizeInBytes,
+					Duration:  duration,
+				})
+		})
+	return checkingFile, nil
+}
+
 // PathBase implements the FS interface.
 func (d *diskHealthCheckingFS) PathBase(path string) string {
 	return d.fs.PathBase(path)

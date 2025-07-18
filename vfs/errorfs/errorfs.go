@@ -364,6 +364,18 @@ func (fs *FS) OpenDir(name string) (vfs.File, error) {
 	return &errorFile{name, f, fs.inj}, nil
 }
 
+// OpenDirectIO implements FS.OpenDirectIO.
+func (fs *FS) OpenDirectIO(name string, flag int, perm os.FileMode) (vfs.File, error) {
+	if err := fs.inj.MaybeError(Op{Kind: OpOpen, Path: name}); err != nil {
+		return nil, err
+	}
+	f, err := fs.fs.OpenDirectIO(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return &errorFile{name, f, fs.inj}, nil
+}
+
 // GetDiskUsage implements FS.GetDiskUsage.
 func (fs *FS) GetDiskUsage(path string) (vfs.DiskUsage, error) {
 	if err := fs.inj.MaybeError(Op{Kind: OpGetDiskUsage, Path: path}); err != nil {

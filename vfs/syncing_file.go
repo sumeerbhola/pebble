@@ -5,6 +5,7 @@
 package vfs
 
 import (
+	"os"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
@@ -35,6 +36,8 @@ type syncingFile struct {
 	// sync the file's metadata.
 	syncOffset         atomic.Int64
 	preallocatedBlocks int64
+	// isDirectIO indicates if the underlying file is opened with O_DIRECT
+	isDirectIO bool
 }
 
 // NewSyncingFile wraps a writable file and ensures that data is synced
@@ -43,12 +46,16 @@ type syncingFile struct {
 // the OS automatically decides to write out a large chunk of dirty filesystem
 // buffers. The underlying file is fully synced upon close.
 func NewSyncingFile(f File, opts SyncingFileOptions) File {
+	// Check if the underlying file is a DirectIOFile (Linux only)
+	isDirectIO := isDirectIOFile(f)
+	
 	s := &syncingFile{
 		File:            f,
 		fd:              f.Fd(),
 		noSyncOnClose:   bool(opts.NoSyncOnClose),
 		bytesPerSync:    int64(opts.BytesPerSync),
 		preallocateSize: int64(opts.PreallocateSize),
+		isDirectIO:      isDirectIO,
 	}
 	// Ensure a file that is opened and then closed will be synced, even if no
 	// data has been written to it.
@@ -114,6 +121,19 @@ func (f *syncingFile) Sync() error {
 func (f *syncingFile) maybeSync() error {
 	if f.bytesPerSync <= 0 {
 		return nil
+	}
+
+	// For O_DIRECT files, periodic syncing is less beneficial since they
+	// bypass the page cache. We can reduce sync frequency for these files.
+	if f.isDirectIO {
+		// Still sync occasionally for metadata, but less frequently
+		offset := f.offset.Load()
+		syncOffset := f.syncOffset.Load()
+		if (offset - syncOffset) < (f.bytesPerSync * 4) {
+			return nil
+		}
+		f.ratchetSyncOffset(offset)
+		return f.SyncData()
 	}
 
 	// From the RocksDB source:
@@ -214,4 +234,12 @@ func (fs *syncingFS) ReuseForWrite(
 ) (File, error) {
 	// TODO(radu): implement this if needed.
 	panic("unimplemented")
+}
+
+func (fs *syncingFS) OpenDirectIO(name string, flag int, perm os.FileMode) (File, error) {
+	f, err := fs.FS.OpenDirectIO(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return NewSyncingFile(f, fs.syncOpts), nil
 }

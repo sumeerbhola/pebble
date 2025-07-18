@@ -87,6 +87,7 @@ type mockFS struct {
 	mkdirAll      func(string, os.FileMode) error
 	open          func(string, ...OpenOption) (File, error)
 	openDir       func(string) (File, error)
+	openDirectIO  func(string, int, os.FileMode) (File, error)
 	pathBase      func(string) string
 	pathJoin      func(...string) string
 	pathDir       func(string) string
@@ -130,6 +131,13 @@ func (m mockFS) OpenDir(name string) (File, error) {
 		panic("unimplemented")
 	}
 	return m.openDir(name)
+}
+
+func (m mockFS) OpenDirectIO(name string, flag int, perm os.FileMode) (File, error) {
+	if m.openDirectIO == nil {
+		panic("unimplemented")
+	}
+	return m.openDirectIO(name, flag, perm)
 }
 
 func (m mockFS) Remove(name string) error {

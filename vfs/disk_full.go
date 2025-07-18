@@ -252,6 +252,17 @@ func (fs *enospcFS) OpenDir(name string) (File, error) {
 	return f, err
 }
 
+func (fs *enospcFS) OpenDirectIO(name string, flag int, perm os.FileMode) (File, error) {
+	f, err := fs.inner.OpenDirectIO(name, flag, perm)
+	if f != nil {
+		f = &enospcFile{
+			fs:    fs,
+			inner: f,
+		}
+	}
+	return f, err
+}
+
 func (fs *enospcFS) Remove(name string) error {
 	gen := fs.waitUntilReady()
 

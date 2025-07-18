@@ -357,6 +357,12 @@ func (y *MemFS) OpenDir(fullname string) (File, error) {
 	return y.open(fullname, false /* openForWrite */)
 }
 
+// OpenDirectIO implements FS.OpenDirectIO.
+// For in-memory filesystem, this behaves the same as regular file operations.
+func (y *MemFS) OpenDirectIO(name string, flag int, perm os.FileMode) (File, error) {
+	return y.open(name, true /* openForWrite */)
+}
+
 // Remove implements FS.Remove.
 func (y *MemFS) Remove(fullname string) error {
 	if y.crashable {

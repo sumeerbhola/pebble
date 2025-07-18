@@ -69,6 +69,10 @@ func (fs *openFilesFS) OpenDir(name string) (vfs.File, error) {
 	return fs.wrapOpenFile(fs.inner.OpenDir(name))
 }
 
+func (fs *openFilesFS) OpenDirectIO(name string, flag int, perm os.FileMode) (vfs.File, error) {
+	return fs.wrapOpenFile(fs.inner.OpenDirectIO(name, flag, perm))
+}
+
 func (fs *openFilesFS) Remove(name string) error {
 	return fs.inner.Remove(name)
 }

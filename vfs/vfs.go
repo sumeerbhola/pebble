@@ -109,6 +109,11 @@ type FS interface {
 	// OpenDir opens the named directory for syncing.
 	OpenDir(name string) (File, error)
 
+	// OpenDirectIO opens the named file with O_DIRECT for direct I/O operations.
+	// This bypasses the OS page cache and may require aligned memory operations.
+	// Only supported on Linux; returns error on other platforms.
+	OpenDirectIO(name string, flag int, perm os.FileMode) (File, error)
+
 	// Remove removes the named file or directory.
 	Remove(name string) error
 

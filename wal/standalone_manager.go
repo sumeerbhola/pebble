@@ -150,7 +150,12 @@ func (m *StandaloneManager) Create(wn NumWAL, jobID int) (Writer, error) {
 		newLogFile, err = m.o.Primary.FS.ReuseForWrite(recycleLogName, newLogName, "pebble-wal")
 		base.MustExist(m.o.Primary.FS, newLogName, m.o.Logger, err)
 	} else {
-		newLogFile, err = m.o.Primary.FS.Create(newLogName, "pebble-wal")
+		// Try to use O_DIRECT for new files if supported
+		newLogFile, err = m.o.Primary.FS.OpenDirectIO(newLogName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
+		if err != nil {
+			// Fall back to regular file creation if O_DIRECT is not supported
+			newLogFile, err = m.o.Primary.FS.Create(newLogName, "pebble-wal")
+		}
 		base.MustExist(m.o.Primary.FS, newLogName, m.o.Logger, err)
 	}
 	createInfo := CreateInfo{
