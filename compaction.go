@@ -3235,7 +3235,11 @@ func (d *DB) runCompaction(
 
 	result := d.compactAndWrite(jobID, c, snapshots, c.tableFormat, valueSeparation)
 	if result.Err == nil {
-		ve, result.Err = c.makeVersionEdit(result)
+		outputLevel := 0
+		if c.outputLevel != nil {
+			outputLevel = c.outputLevel.level
+		}
+		ve, result.Err = c.makeVersionEdit(result, outputLevel)
 	}
 	if result.Err != nil {
 		// Delete any created tables or blob files.
@@ -3426,7 +3430,9 @@ func (d *DB) compactAndWrite(
 
 // makeVersionEdit creates the version edit for a compaction, based on the
 // tables in compact.Result.
-func (c *tableCompaction) makeVersionEdit(result compact.Result) (*manifest.VersionEdit, error) {
+func (c *tableCompaction) makeVersionEdit(
+	result compact.Result, outputLevel int,
+) (*manifest.VersionEdit, error) {
 	ve := &manifest.VersionEdit{
 		DeletedTables: map[manifest.DeletedTableEntry]*manifest.TableMetadata{},
 	}
@@ -3497,6 +3503,7 @@ func (c *tableCompaction) makeVersionEdit(result compact.Result) (*manifest.Vers
 			LargestSeqNum:      t.WriterMeta.LargestSeqNum,
 			BlobReferences:     t.BlobReferences,
 			BlobReferenceDepth: t.BlobReferenceDepth,
+			InitialLevel:       outputLevel,
 		}
 		if c.flush.flushables == nil {
 			// Set the file's LargestSeqNumAbsolute to be the maximum value of any

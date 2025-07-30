@@ -157,7 +157,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-   5 (1.8KB) |       81.8% |     1 (376B) |       89.2% |         0.0% |           0 |           0
+   5 (1.8KB) |       81.8% |     1 (400B) |       89.2% |         0.0% |           0 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -181,6 +181,8 @@ KEYS
 
 COMPRESSION
   snappy: 1
+
+0: (m10,t68,0.147) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m5,t9,0.556)
 ----
 ----
 
@@ -429,7 +431,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-   7 (2.5KB) |       59.6% |     1 (472B) |       78.6% |         0.0% |           0 |           0
+   7 (2.5KB) |       59.6% |     1 (504B) |       78.6% |         0.0% |           0 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -453,6 +455,8 @@ KEYS
 
 COMPRESSION
   snappy: 1
+
+0: (m10,t23,0.435) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m5,t13,0.385)
 ----
 ----
 

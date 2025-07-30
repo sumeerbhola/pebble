@@ -442,7 +442,7 @@ func NewFileReader(
 	if err := fr.footer.decode(encodedFooter); err != nil {
 		return nil, err
 	}
-	fr.r.Init(r, ro.ReaderOptions, fr.footer.checksum)
+	fr.r.Init(r, ro.ReaderOptions, fr.footer.checksum, 100)
 	return fr, nil
 }
 

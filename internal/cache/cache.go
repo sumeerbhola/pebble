@@ -28,7 +28,11 @@ type Metrics struct {
 	// The number of cache hits.
 	Hits int64
 	// The number of cache misses.
-	Misses int64
+	Misses        int64
+	LevelsMetrics [7]struct {
+		Hits   int64
+		Misses int64
+	}
 }
 
 // Cache implements Pebble's sharded block cache. The Clock-PRO algorithm is
@@ -218,6 +222,10 @@ func (c *Cache) Metrics() Metrics {
 		s.mu.RUnlock()
 		m.Hits += s.hits.Load()
 		m.Misses += s.misses.Load()
+		for j := range s.LevelsMetrics {
+			m.LevelsMetrics[j].Hits += s.LevelsMetrics[j].hits.Load()
+			m.LevelsMetrics[j].Misses += s.LevelsMetrics[j].misses.Load()
+		}
 	}
 	return m
 }
@@ -261,9 +269,9 @@ func (c *Handle) Cache() *Cache {
 
 // Get retrieves the cache value for the specified file and offset, returning
 // nil if no value is present.
-func (c *Handle) Get(fileNum base.DiskFileNum, offset uint64) *Value {
+func (c *Handle) Get(fileNum base.DiskFileNum, offset uint64, optionalLevel int) *Value {
 	k := makeKey(c.id, fileNum, offset)
-	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, false /* desireReadEntry */)
+	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, false /* desireReadEntry */, optionalLevel)
 	if invariants.Enabled && re != nil {
 		panic("readEntry should be nil")
 	}
@@ -293,10 +301,10 @@ func (c *Handle) Get(fileNum base.DiskFileNum, offset uint64) *Value {
 // While waiting, someone else may successfully read the value, which results
 // in a valid Handle being returned. This is a case where cacheHit=false.
 func (c *Handle) GetWithReadHandle(
-	ctx context.Context, fileNum base.DiskFileNum, offset uint64,
+	ctx context.Context, fileNum base.DiskFileNum, offset uint64, optionalLevel int,
 ) (cv *Value, rh ReadHandle, errorDuration time.Duration, cacheHit bool, err error) {
 	k := makeKey(c.id, fileNum, offset)
-	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, true /* desireReadEntry */)
+	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, true /* desireReadEntry */, optionalLevel)
 	if cv != nil {
 		return cv, ReadHandle{}, 0, true, nil
 	}

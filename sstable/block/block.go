@@ -330,9 +330,10 @@ func (env *ReadEnv) maybeReportCorruption(err error) error {
 // A Reader reads blocks from a single file, handling caching, checksum
 // validation and decompression.
 type Reader struct {
-	readable     objstorage.Readable
-	opts         ReaderOptions
-	checksumType ChecksumType
+	readable      objstorage.Readable
+	opts          ReaderOptions
+	checksumType  ChecksumType
+	optionalLevel int
 }
 
 // ReaderOptions configures a block reader.
@@ -349,10 +350,13 @@ type ReaderOptions struct {
 }
 
 // Init initializes the Reader to read blocks from the provided Readable.
-func (r *Reader) Init(readable objstorage.Readable, ro ReaderOptions, checksumType ChecksumType) {
+func (r *Reader) Init(
+	readable objstorage.Readable, ro ReaderOptions, checksumType ChecksumType, optionalLevel int,
+) {
 	r.readable = readable
 	r.opts = ro
 	r.checksumType = checksumType
+	r.optionalLevel = optionalLevel
 }
 
 // FileNum returns the file number of the file being read.
@@ -380,7 +384,7 @@ func (r *Reader) Read(
 	// reading a block.
 	if r.opts.CacheOpts.CacheHandle == nil || env.BufferPool != nil {
 		if r.opts.CacheOpts.CacheHandle != nil {
-			if cv := r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset); cv != nil {
+			if cv := r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel); cv != nil {
 				recordCacheHit(ctx, env, readHandle, bh, kind)
 				return CacheBufferHandle(cv), nil
 			}
@@ -393,7 +397,7 @@ func (r *Reader) Read(
 	}
 
 	cv, crh, errorDuration, hit, err := r.opts.CacheOpts.CacheHandle.GetWithReadHandle(
-		ctx, r.opts.CacheOpts.FileNum, bh.Offset)
+		ctx, r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel)
 	if errorDuration > 5*time.Millisecond && r.opts.LoggerAndTracer.IsTracingEnabled(ctx) {
 		r.opts.LoggerAndTracer.Eventf(
 			ctx, "waited for turn when %s time wasted by failed reads", errorDuration.String())
@@ -529,7 +533,7 @@ func (r *Reader) Readable() objstorage.Readable {
 // Users should prefer using Read, which handles reading from object storage on
 // a cache miss.
 func (r *Reader) GetFromCache(bh Handle) *cache.Value {
-	return r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset)
+	return r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel)
 }
 
 // UsePreallocatedReadHandle returns a ReadHandle that reads from the reader and

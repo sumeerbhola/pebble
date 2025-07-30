@@ -76,9 +76,16 @@ func (k key) String() string {
 	return fmt.Sprintf("%d/%d/%d", k.id, k.fileNum, k.offset)
 }
 
-type shard struct {
+type LevelMetrics struct {
 	hits   atomic.Int64
 	misses atomic.Int64
+}
+
+type LevelsMetrics [7]LevelMetrics
+type shard struct {
+	hits          atomic.Int64
+	misses        atomic.Int64
+	LevelsMetrics LevelsMetrics
 
 	mu sync.RWMutex
 
@@ -135,7 +142,9 @@ func (c *shard) init(maxSize int64) {
 // is not in the cache (nil Value), a non-nil readEntry is returned (in which
 // case the caller is responsible to dereference the entry, via one of
 // unrefAndTryRemoveFromMap(), setReadValue(), setReadError()).
-func (c *shard) getWithMaybeReadEntry(k key, desireReadEntry bool) (*Value, *readEntry) {
+func (c *shard) getWithMaybeReadEntry(
+	k key, desireReadEntry bool, optionalLevel int,
+) (*Value, *readEntry) {
 	c.mu.RLock()
 	var value *Value
 	if e, _ := c.blocks.Get(k); e != nil {
@@ -152,8 +161,14 @@ func (c *shard) getWithMaybeReadEntry(k key, desireReadEntry bool) (*Value, *rea
 	c.mu.RUnlock()
 	if value == nil {
 		c.misses.Add(1)
+		if optionalLevel < cap(c.LevelsMetrics) {
+			c.LevelsMetrics[optionalLevel].misses.Add(1)
+		}
 	} else {
 		c.hits.Add(1)
+		if optionalLevel < cap(c.LevelsMetrics) {
+			c.LevelsMetrics[optionalLevel].hits.Add(1)
+		}
 	}
 	return value, re
 }

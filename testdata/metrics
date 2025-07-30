@@ -64,6 +64,8 @@ COMPRESSION
   snappy: 33
   zstd:   34
   none:   35
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 ----
 ----
 
@@ -126,7 +128,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (747B) |        0.0% |     1 (280B) |        0.0% |         0.0% |           1 |           0
+    2 (747B) |        0.0% |     1 (296B) |        0.0% |         0.0% |           1 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -150,6 +152,8 @@ KEYS
 
 COMPRESSION
   snappy: 1
+
+0: (m4,t4,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -223,7 +227,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (747B) |       33.3% |     2 (560B) |       66.7% |         0.0% |           2 |           0
+    2 (747B) |       33.3% |     2 (592B) |       66.7% |         0.0% |           2 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -247,6 +251,8 @@ KEYS
 
 COMPRESSION
   snappy: 2
+
+0: (m8,t12,0.667) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:224 BlockBytesInCache:112 BlockReadDuration:10ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -303,7 +309,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (747B) |       33.3% |     2 (560B) |       66.7% |         0.0% |           2 |           0
+    2 (747B) |       33.3% |     2 (592B) |       66.7% |         0.0% |           2 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -327,6 +333,8 @@ KEYS
 
 COMPRESSION
   snappy: 2
+
+0: (m8,t12,0.667) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:224 BlockBytesInCache:112 BlockReadDuration:10ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -380,7 +388,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (747B) |       33.3% |     1 (280B) |       66.7% |         0.0% |           1 |           0
+    2 (747B) |       33.3% |     1 (296B) |       66.7% |         0.0% |           1 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -404,6 +412,8 @@ KEYS
 
 COMPRESSION
   snappy: 2
+
+0: (m8,t12,0.667) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:224 BlockBytesInCache:112 BlockReadDuration:10ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -484,6 +494,8 @@ KEYS
 
 COMPRESSION
   snappy: 2
+
+0: (m8,t12,0.667) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:224 BlockBytesInCache:112 BlockReadDuration:10ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -603,6 +615,8 @@ KEYS
 
 COMPRESSION
   snappy: 9
+
+0: (m8,t12,0.667) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:224 BlockBytesInCache:112 BlockReadDuration:10ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -707,6 +721,8 @@ KEYS
 
 COMPRESSION
   snappy: 9
+
+0: (m36,t40,0.900) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:1106 BlockBytesInCache:112 BlockReadDuration:80ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -862,6 +878,8 @@ KEYS
 
 COMPRESSION
   snappy: 15
+
+0: (m51,t55,0.927) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:1106 BlockBytesInCache:112 BlockReadDuration:80ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -979,6 +997,8 @@ KEYS
 
 COMPRESSION
   snappy: 22
+
+0: (m51,t55,0.927) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:1106 BlockBytesInCache:112 BlockReadDuration:80ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -1108,6 +1128,8 @@ KEYS
 
 COMPRESSION
   snappy: 21
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:1106 BlockBytesInCache:112 BlockReadDuration:80ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -1281,6 +1303,8 @@ KEYS
 
 COMPRESSION
   snappy: 18
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:2235 BlockBytesInCache:457 BlockReadDuration:150ms}
                    a, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
@@ -1371,6 +1395,8 @@ KEYS
 
 COMPRESSION
   snappy: 3
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
 ----
@@ -1447,6 +1473,8 @@ KEYS
 
 COMPRESSION
   snappy: 3
+
+0: (m12,t12,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:336 BlockBytesInCache:0 BlockReadDuration:30ms}
 ----
@@ -1539,6 +1567,8 @@ KEYS
 
 COMPRESSION
   snappy: 4
+
+0: (m17,t17,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:336 BlockBytesInCache:0 BlockReadDuration:30ms}
 ----
@@ -1623,6 +1653,8 @@ KEYS
 
 COMPRESSION
   snappy: 5
+
+0: (m17,t17,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:336 BlockBytesInCache:0 BlockReadDuration:30ms}
 ----
@@ -1696,6 +1728,8 @@ KEYS
 
 COMPRESSION
   snappy: 5
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
 ----
@@ -1772,6 +1806,8 @@ KEYS
 
 COMPRESSION
   snappy: 3
+
+0: (m0,t0,NaN) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:342 BlockBytesInCache:0 BlockReadDuration:30ms}
 ----
@@ -1862,7 +1898,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (726B) |        0.0% |     2 (560B) |        0.0% |         0.0% |           0 |           0
+    2 (726B) |        0.0% |     2 (592B) |        0.0% |         0.0% |           0 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -1886,6 +1922,8 @@ KEYS
 
 COMPRESSION
   snappy: 5
+
+0: (m8,t8,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
 ----
@@ -1935,7 +1973,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-    2 (726B) |        0.0% |     2 (560B) |        0.0% |         0.0% |           0 |           0
+    2 (726B) |        0.0% |     2 (592B) |        0.0% |         0.0% |           0 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -1959,6 +1997,8 @@ KEYS
 
 COMPRESSION
   snappy: 5
+
+0: (m8,t8,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 Iter category stats:
    pebble-compaction, non-latency: {BlockBytes:0 BlockBytesInCache:0 BlockReadDuration:0s}
 ----

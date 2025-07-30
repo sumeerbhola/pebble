@@ -107,6 +107,8 @@ type ReaderOptions struct {
 
 	// FilterMetricsTracker is optionally used to track filter metrics.
 	FilterMetricsTracker *FilterMetricsTracker
+
+	OptionalLevel int
 }
 
 func (o ReaderOptions) ensureDefaults() ReaderOptions {

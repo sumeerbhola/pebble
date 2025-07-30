@@ -204,7 +204,7 @@ func (h *fileCacheHandle) Close() error {
 
 // openFile is called when we insert a new entry in the file cache.
 func (h *fileCacheHandle) openFile(
-	ctx context.Context, fileNum base.DiskFileNum, fileType base.FileType,
+	ctx context.Context, fileNum base.DiskFileNum, fileType base.FileType, optionalLevel int,
 ) (io.Closer, objstorage.ObjectMetadata, error) {
 	f, err := h.objProvider.OpenForReading(
 		ctx, fileType, fileNum, objstorage.OpenOptions{MustExist: true},
@@ -224,6 +224,7 @@ func (h *fileCacheHandle) openFile(
 	}
 	switch fileType {
 	case base.FileTypeTable:
+		o.OptionalLevel = optionalLevel
 		r, err := sstable.NewReader(ctx, f, o)
 		if err != nil {
 			// If opening the sstable reader fails, we're responsible for
@@ -253,9 +254,10 @@ func (h *fileCacheHandle) findOrCreateTable(
 	ctx context.Context, meta *manifest.TableMetadata,
 ) (genericcache.ValueRef[fileCacheKey, fileCacheValue], error) {
 	key := fileCacheKey{
-		handle:   h,
-		fileNum:  meta.TableBacking.DiskFileNum,
-		fileType: base.FileTypeTable,
+		handle:        h,
+		fileNum:       meta.TableBacking.DiskFileNum,
+		fileType:      base.FileTypeTable,
+		optionalLevel: meta.InitialLevel,
 	}
 	valRef, err := h.fileCache.c.FindOrCreate(ctx, key)
 	if err != nil && IsCorruptionError(err) {
@@ -463,7 +465,7 @@ func NewFileCache(numShards int, size int) *FileCache {
 			vRef.Unref()
 			handle.iterCount.Add(-1)
 		}
-		reader, objMeta, err := handle.openFile(ctx, key.fileNum, key.fileType)
+		reader, objMeta, err := handle.openFile(ctx, key.fileNum, key.fileType, key.optionalLevel)
 		if err != nil {
 			return errors.Wrapf(err, "pebble: backing file %s error", redact.Safe(key.fileNum))
 		}
@@ -509,6 +511,8 @@ type fileCacheKey struct {
 	// to propagate the type so the file cache looks for the correct file in
 	// object storage / the filesystem.
 	fileType base.FileType
+
+	optionalLevel int
 }
 
 // Shard implements the genericcache.Key interface.

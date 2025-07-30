@@ -147,6 +147,8 @@ type TableMetadata struct {
 	// INVARIANT: BlobReferenceDepth <= len(BlobReferences)
 	BlobReferenceDepth BlobReferenceDepth
 
+	InitialLevel int
+
 	// refs is the reference count for the table, used to determine when a table
 	// is obsolete. When a table's reference count falls to zero, the table is
 	// considered obsolete and the table's references on its associated files

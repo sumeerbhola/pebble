@@ -70,6 +70,8 @@ type Reader struct {
 	tableFormat    TableFormat
 	Attributes     Attributes
 	UserProperties map[string]string
+
+	OptionalLevel int
 }
 
 type ReadEnv struct {
@@ -953,6 +955,7 @@ func NewReader(ctx context.Context, f objstorage.Readable, o ReaderOptions) (*Re
 
 	r := &Reader{
 		filterMetricsTracker: o.FilterMetricsTracker,
+		OptionalLevel:        o.OptionalLevel,
 	}
 
 	var preallocRH objstorageprovider.PreallocatedReadHandle
@@ -964,7 +967,7 @@ func NewReader(ctx context.Context, f objstorage.Readable, o ReaderOptions) (*Re
 	if err != nil {
 		return nil, err
 	}
-	r.blockReader.Init(f, o.ReaderOptions, footer.checksum)
+	r.blockReader.Init(f, o.ReaderOptions, footer.checksum, r.OptionalLevel)
 	r.tableFormat = footer.format
 	r.indexBH = footer.indexBH
 	r.metaindexBH = footer.metaindexBH

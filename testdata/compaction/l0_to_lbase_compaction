@@ -69,7 +69,7 @@ ITERATORS
         block cache        |         file cache         |    filter    |  sst iters  |  snapshots
      entries |    hit rate |      entries |    hit rate |         util |        open |        open
 -------------+-------------+--------------+-------------+--------------+-------------+------------
-1.5K (6.4MB) |       60.0% |     3 (840B) |       90.0% |         0.0% |           0 |           0
+1.5K (6.4MB) |       60.0% |     3 (888B) |       90.0% |         0.0% |           0 |           0
 
 FILES                 tables                       |       blob files        |     blob values
    stats prog |    backing |                zombie |       live |     zombie |  total |      refed
@@ -93,5 +93,7 @@ KEYS
 
 COMPRESSION
   snappy: 3
+
+0: (m3068,t7661,0.400) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 ----
 ----

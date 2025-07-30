@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -1014,7 +1015,7 @@ func (m *Metrics) String() string {
 	cur = keysInfoTable.Render(cur, table.RenderOptions{}, oneItemIter(keysInfoContents))
 	cur = cur.NewlineReturn()
 
-	func(cur ascii.Cursor) {
+	cur = func(cur ascii.Cursor) ascii.Cursor {
 		maybePrintCompression := func(pos ascii.Cursor, name string, value int64) ascii.Cursor {
 			if value > 0 {
 				pos = pos.Printf("  %s %s", name, humanizeCount(value)).NewlineReturn()
@@ -1028,7 +1029,18 @@ func (m *Metrics) String() string {
 		cur = maybePrintCompression(cur, "none:  ", m.Table.CompressedCountNone)
 		cur = maybePrintCompression(cur, "???:   ", m.Table.CompressedCountUnknown)
 		_ = cur
+		return cur
 	}(cur)
+	var b strings.Builder
+	for i := range m.BlockCache.LevelsMetrics {
+		sum := m.BlockCache.LevelsMetrics[i].Hits + m.BlockCache.LevelsMetrics[i].Misses
+		fmt.Fprintf(&b, "%d: (m%d,t%d,%.3f) ", i, m.BlockCache.LevelsMetrics[i].Misses, sum,
+			float64(m.BlockCache.LevelsMetrics[i].Misses)/float64(sum))
+	}
+	cur = cur.NewlineReturn()
+	cur = cur.WriteString(b.String())
+	cur = cur.NewlineReturn()
+	_ = cur
 
 	return wb.String()
 }
@@ -1058,8 +1070,8 @@ func (m *Metrics) StringForTests() string {
 
 	// We recalculate the file cache size using the 64-bit sizes, and we ignore
 	// the genericcache metadata size which is harder to adjust.
-	const sstableReaderSize64bit = 280
-	const blobFileReaderSize64bit = 96
+	const sstableReaderSize64bit = 296
+	const blobFileReaderSize64bit = 104
 	mCopy.FileCache.Size = mCopy.FileCache.TableCount*sstableReaderSize64bit + mCopy.FileCache.BlobFileCount*blobFileReaderSize64bit
 	if math.MaxInt == math.MaxInt64 {
 		// Verify the 64-bit sizes, so they are kept updated.
