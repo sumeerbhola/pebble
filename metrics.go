@@ -1033,9 +1033,14 @@ func (m *Metrics) String() string {
 	}(cur)
 	var b strings.Builder
 	for i := range m.BlockCache.LevelsMetrics {
-		sum := m.BlockCache.LevelsMetrics[i].Hits + m.BlockCache.LevelsMetrics[i].Misses
-		fmt.Fprintf(&b, "%d: (m%d,t%d,%.3f) ", i, m.BlockCache.LevelsMetrics[i].Misses, sum,
-			float64(m.BlockCache.LevelsMetrics[i].Misses)/float64(sum))
+		var sum int64
+		var misses int64
+		for j := range m.BlockCache.LevelsMetrics[i] {
+			sum += m.BlockCache.LevelsMetrics[i][j].Hits + m.BlockCache.LevelsMetrics[i][j].Misses
+			misses += m.BlockCache.LevelsMetrics[i][j].Misses
+		}
+		fmt.Fprintf(&b, "%d: (m%d,t%d,%.3f) ", i, misses, sum,
+			float64(misses)/float64(sum))
 	}
 	cur = cur.NewlineReturn()
 	cur = cur.WriteString(b.String())

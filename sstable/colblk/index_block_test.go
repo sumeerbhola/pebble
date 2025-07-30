@@ -18,6 +18,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/cache"
 	"github.com/cockroachdb/pebble/internal/testkeys"
 	"github.com/cockroachdb/pebble/sstable/block"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 	"github.com/cockroachdb/pebble/sstable/blockiter"
 	"github.com/stretchr/testify/require"
 )
@@ -132,7 +133,7 @@ func TestIndexIterInitHandle(t *testing.T) {
 	}
 
 	getBlockAndIterate := func(it *IndexIter) {
-		cv := ch.Get(base.DiskFileNum(1), 0, 100)
+		cv := ch.Get(base.DiskFileNum(1), 0, 100, blockkind.Unknown)
 		require.NotNil(t, cv)
 		require.NoError(t, it.InitHandle(testkeys.Comparer, block.CacheBufferHandle(cv), blockiter.NoTransforms))
 		defer it.Close()

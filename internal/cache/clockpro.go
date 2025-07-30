@@ -27,6 +27,7 @@ import (
 
 	"github.com/cockroachdb/pebble/internal/base"
 	"github.com/cockroachdb/pebble/internal/invariants"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 )
 
 // key is associated with a specific block.
@@ -81,7 +82,7 @@ type LevelMetrics struct {
 	misses atomic.Int64
 }
 
-type LevelsMetrics [7]LevelMetrics
+type LevelsMetrics [7][blockkind.NumKinds]LevelMetrics
 type shard struct {
 	hits          atomic.Int64
 	misses        atomic.Int64
@@ -143,7 +144,7 @@ func (c *shard) init(maxSize int64) {
 // case the caller is responsible to dereference the entry, via one of
 // unrefAndTryRemoveFromMap(), setReadValue(), setReadError()).
 func (c *shard) getWithMaybeReadEntry(
-	k key, desireReadEntry bool, optionalLevel int,
+	k key, desireReadEntry bool, optionalLevel int, blockKind blockkind.Kind,
 ) (*Value, *readEntry) {
 	c.mu.RLock()
 	var value *Value
@@ -162,12 +163,12 @@ func (c *shard) getWithMaybeReadEntry(
 	if value == nil {
 		c.misses.Add(1)
 		if optionalLevel < cap(c.LevelsMetrics) {
-			c.LevelsMetrics[optionalLevel].misses.Add(1)
+			c.LevelsMetrics[optionalLevel][blockKind].misses.Add(1)
 		}
 	} else {
 		c.hits.Add(1)
 		if optionalLevel < cap(c.LevelsMetrics) {
-			c.LevelsMetrics[optionalLevel].hits.Add(1)
+			c.LevelsMetrics[optionalLevel][blockKind].hits.Add(1)
 		}
 	}
 	return value, re

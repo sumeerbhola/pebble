@@ -31,6 +31,7 @@ import (
 	"github.com/cockroachdb/pebble/objstorage"
 	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable/block"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 	"github.com/cockroachdb/pebble/sstable/rowblk"
 	"github.com/cockroachdb/pebble/sstable/valblk"
 	"github.com/cockroachdb/pebble/vfs"
@@ -848,7 +849,7 @@ func TestWriterClearCache(t *testing.T) {
 
 	// Verify that the written blocks have been cleared from the cache.
 	check := func(bh block.Handle) {
-		cv := cacheOpts.CacheHandle.Get(cacheOpts.FileNum, bh.Offset, 100)
+		cv := cacheOpts.CacheHandle.Get(cacheOpts.FileNum, bh.Offset, 100, blockkind.Unknown)
 		if cv != nil {
 			t.Fatalf("%d: expected cache to be cleared, but found %#v", bh.Offset, cv)
 		}

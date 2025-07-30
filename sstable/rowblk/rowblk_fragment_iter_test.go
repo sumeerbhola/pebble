@@ -18,6 +18,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/rangekey"
 	"github.com/cockroachdb/pebble/internal/testkeys"
 	"github.com/cockroachdb/pebble/sstable/block"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 	"github.com/cockroachdb/pebble/sstable/blockiter"
 	"github.com/stretchr/testify/require"
 )
@@ -96,7 +97,7 @@ func TestBlockFragmentIterator(t *testing.T) {
 				return d.Expected
 			}
 
-			blockHandle := block.CacheBufferHandle(cacheHandle.Get(0, 0, 100))
+			blockHandle := block.CacheBufferHandle(cacheHandle.Get(0, 0, 100, blockkind.Unknown))
 			require.True(t, blockHandle.Valid())
 			i, err := NewFragmentIter(0, comparer, blockHandle, transforms)
 			defer i.Close()

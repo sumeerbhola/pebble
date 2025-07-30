@@ -17,6 +17,7 @@ import (
 
 	"github.com/cockroachdb/pebble/internal/base"
 	"github.com/cockroachdb/pebble/internal/invariants"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 )
 
 // Metrics holds metrics for the cache.
@@ -29,7 +30,7 @@ type Metrics struct {
 	Hits int64
 	// The number of cache misses.
 	Misses        int64
-	LevelsMetrics [7]struct {
+	LevelsMetrics [7][blockkind.NumKinds]struct {
 		Hits   int64
 		Misses int64
 	}
@@ -223,8 +224,10 @@ func (c *Cache) Metrics() Metrics {
 		m.Hits += s.hits.Load()
 		m.Misses += s.misses.Load()
 		for j := range s.LevelsMetrics {
-			m.LevelsMetrics[j].Hits += s.LevelsMetrics[j].hits.Load()
-			m.LevelsMetrics[j].Misses += s.LevelsMetrics[j].misses.Load()
+			for k := range s.LevelsMetrics[j] {
+				m.LevelsMetrics[j][k].Hits += s.LevelsMetrics[j][k].hits.Load()
+				m.LevelsMetrics[j][k].Misses += s.LevelsMetrics[j][k].misses.Load()
+			}
 		}
 	}
 	return m
@@ -269,9 +272,11 @@ func (c *Handle) Cache() *Cache {
 
 // Get retrieves the cache value for the specified file and offset, returning
 // nil if no value is present.
-func (c *Handle) Get(fileNum base.DiskFileNum, offset uint64, optionalLevel int) *Value {
+func (c *Handle) Get(
+	fileNum base.DiskFileNum, offset uint64, optionalLevel int, blockKind blockkind.Kind,
+) *Value {
 	k := makeKey(c.id, fileNum, offset)
-	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, false /* desireReadEntry */, optionalLevel)
+	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, false /* desireReadEntry */, optionalLevel, blockKind)
 	if invariants.Enabled && re != nil {
 		panic("readEntry should be nil")
 	}
@@ -301,10 +306,14 @@ func (c *Handle) Get(fileNum base.DiskFileNum, offset uint64, optionalLevel int)
 // While waiting, someone else may successfully read the value, which results
 // in a valid Handle being returned. This is a case where cacheHit=false.
 func (c *Handle) GetWithReadHandle(
-	ctx context.Context, fileNum base.DiskFileNum, offset uint64, optionalLevel int,
+	ctx context.Context,
+	fileNum base.DiskFileNum,
+	offset uint64,
+	optionalLevel int,
+	blockKind blockkind.Kind,
 ) (cv *Value, rh ReadHandle, errorDuration time.Duration, cacheHit bool, err error) {
 	k := makeKey(c.id, fileNum, offset)
-	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, true /* desireReadEntry */, optionalLevel)
+	cv, re := c.cache.getShard(k).getWithMaybeReadEntry(k, true /* desireReadEntry */, optionalLevel, blockKind)
 	if cv != nil {
 		return cv, ReadHandle{}, 0, true, nil
 	}

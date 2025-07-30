@@ -21,6 +21,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/keyspan"
 	"github.com/cockroachdb/pebble/internal/testkeys"
 	"github.com/cockroachdb/pebble/sstable/block"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 	"github.com/cockroachdb/pebble/sstable/blockiter"
 	"github.com/stretchr/testify/require"
 )
@@ -94,7 +95,7 @@ func TestKeyspanBlockPooling(t *testing.T) {
 	v.SetInCacheForTesting(ch, base.DiskFileNum(1), 0)
 
 	getBlockAndIterate := func() {
-		cv := ch.Get(base.DiskFileNum(1), 0, 100)
+		cv := ch.Get(base.DiskFileNum(1), 0, 100, blockkind.Unknown)
 		require.NotNil(t, cv)
 		it := NewKeyspanIter(testkeys.Comparer.Compare, block.CacheBufferHandle(cv), blockiter.NoFragmentTransforms)
 		defer it.Close()

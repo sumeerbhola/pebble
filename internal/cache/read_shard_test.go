@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/datadriven"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/pebble/internal/base"
+	"github.com/cockroachdb/pebble/sstable/block/blockkind"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,7 @@ func newTestReader(
 }
 
 func (r *testReader) getAsync(shard *shard) *string {
-	v, re := shard.getWithMaybeReadEntry(r.key, true /* desireReadEntry */, 100)
+	v, re := shard.getWithMaybeReadEntry(r.key, true /* desireReadEntry */, 100, blockkind.Unknown)
 	if v != nil {
 		str := string(v.RawBuffer())
 		v.Release()
@@ -254,7 +255,7 @@ func TestReadShardConcurrent(t *testing.T) {
 	for _, r := range differentReaders {
 		for j := 0; j < r.numReaders; j++ {
 			go func(r *testSyncReaders, index int) {
-				v, rh, _, _, err := r.handle.GetWithReadHandle(context.Background(), r.fileNum, r.offset, 100)
+				v, rh, _, _, err := r.handle.GetWithReadHandle(context.Background(), r.fileNum, r.offset, 100, blockkind.Unknown)
 				require.NoError(t, err)
 				if v != nil {
 					require.Equal(t, r.val, v.RawBuffer())

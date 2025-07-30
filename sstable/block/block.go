@@ -384,7 +384,7 @@ func (r *Reader) Read(
 	// reading a block.
 	if r.opts.CacheOpts.CacheHandle == nil || env.BufferPool != nil {
 		if r.opts.CacheOpts.CacheHandle != nil {
-			if cv := r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel); cv != nil {
+			if cv := r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel, kind); cv != nil {
 				recordCacheHit(ctx, env, readHandle, bh, kind)
 				return CacheBufferHandle(cv), nil
 			}
@@ -397,7 +397,7 @@ func (r *Reader) Read(
 	}
 
 	cv, crh, errorDuration, hit, err := r.opts.CacheOpts.CacheHandle.GetWithReadHandle(
-		ctx, r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel)
+		ctx, r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel, kind)
 	if errorDuration > 5*time.Millisecond && r.opts.LoggerAndTracer.IsTracingEnabled(ctx) {
 		r.opts.LoggerAndTracer.Eventf(
 			ctx, "waited for turn when %s time wasted by failed reads", errorDuration.String())
@@ -533,7 +533,7 @@ func (r *Reader) Readable() objstorage.Readable {
 // Users should prefer using Read, which handles reading from object storage on
 // a cache miss.
 func (r *Reader) GetFromCache(bh Handle) *cache.Value {
-	return r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel)
+	return r.opts.CacheOpts.CacheHandle.Get(r.opts.CacheOpts.FileNum, bh.Offset, r.optionalLevel, blockkind.Unknown)
 }
 
 // UsePreallocatedReadHandle returns a ReadHandle that reads from the reader and

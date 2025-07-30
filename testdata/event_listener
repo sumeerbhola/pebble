@@ -303,6 +303,8 @@ KEYS
 
 COMPRESSION
   snappy: 3
+
+0: (m13,t13,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 ----
 ----
 
@@ -440,6 +442,8 @@ KEYS
 
 COMPRESSION
   snappy: 6
+
+0: (m23,t23,1.000) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 ----
 ----
 

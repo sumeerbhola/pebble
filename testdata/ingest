@@ -92,6 +92,8 @@ KEYS
 
 COMPRESSION
   snappy: 1
+
+0: (m11,t13,0.846) 1: (m0,t0,NaN) 2: (m0,t0,NaN) 3: (m0,t0,NaN) 4: (m0,t0,NaN) 5: (m0,t0,NaN) 6: (m0,t0,NaN)
 ----
 ----
 
