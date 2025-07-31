@@ -510,10 +510,6 @@ L6:
 # scan db so that it is known what to expect from the checkpoints.
 scan db
 ----
-open: db/000010.sst (options: *vfs.randomReadsOption)
-read-at(710, 61): db/000010.sst
-read-at(659, 51): db/000010.sst
-read-at(141, 518): db/000010.sst
 a 1
 b 5
 d 7

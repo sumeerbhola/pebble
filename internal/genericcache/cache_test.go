@@ -36,7 +36,7 @@ func (k intKey) Shard(numShards int) int {
 }
 
 func TestBasic(t *testing.T) {
-	initFn := func(ctx context.Context, k intKey, v ValueRef[intKey, string]) error {
+	initFn := func(ctx context.Context, k intKey, _ interface{}, v ValueRef[intKey, string]) error {
 		*v.Value() = fmt.Sprint(k)
 		return nil
 	}
@@ -48,7 +48,7 @@ func TestBasic(t *testing.T) {
 
 	for i := range 100 {
 		k := intKey(i % 10)
-		ref, err := c.FindOrCreate(ctx, k)
+		ref, err := c.FindOrCreate(ctx, k, 100)
 		require.NoError(t, err)
 		require.Equal(t, fmt.Sprint(k), *ref.Value())
 		ref.Unref()
@@ -58,7 +58,7 @@ func TestBasic(t *testing.T) {
 
 	for i := range 100 {
 		k := intKey(i % 10)
-		ref, err := c.FindOrCreate(ctx, k)
+		ref, err := c.FindOrCreate(ctx, k, 100)
 		require.NoError(t, err)
 		require.Equal(t, fmt.Sprint(k), *ref.Value())
 		ref.Unref()
@@ -73,7 +73,7 @@ func TestFileCacheClockPro(t *testing.T) {
 	f, err := os.Open("../cache/testdata/cache")
 	require.NoError(t, err)
 
-	initFn := func(ctx context.Context, k intKey, v ValueRef[intKey, string]) error {
+	initFn := func(ctx context.Context, k intKey, _ interface{}, v ValueRef[intKey, string]) error {
 		*v.Value() = fmt.Sprint(k)
 		return nil
 	}
@@ -95,7 +95,7 @@ func TestFileCacheClockPro(t *testing.T) {
 
 		oldHits := c.shards[0].hits.Load()
 
-		ref, err := c.FindOrCreate(context.Background(), intKey(key))
+		ref, err := c.FindOrCreate(context.Background(), intKey(key), 100)
 		require.NoError(t, err)
 		require.Equal(t, fmt.Sprint(key), *ref.Value())
 		ref.Unref()
@@ -110,7 +110,7 @@ func TestFileCacheClockPro(t *testing.T) {
 
 func TestEvict(t *testing.T) {
 	var initialized []int
-	initFn := func(ctx context.Context, k intKey, v ValueRef[intKey, int]) error {
+	initFn := func(ctx context.Context, k intKey, _ interface{}, v ValueRef[intKey, int]) error {
 		initialized = append(initialized, int(k))
 		*v.Value() = int(k)
 		return nil
@@ -136,23 +136,23 @@ func TestEvict(t *testing.T) {
 	}
 	c := New[intKey, int](20, 1+rand.IntN(4), initFn, releaseFn)
 	ctx := context.Background()
-	testutils.CheckErr(c.FindOrCreate(ctx, 1)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 2)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 3)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 4)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 1, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 2, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 3, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 4, 100)).Unref()
 	expectInitialized(1, 2, 3, 4)
 	expectReleased()
 	c.Evict(2)
 	expectReleased(2)
-	testutils.CheckErr(c.FindOrCreate(ctx, 2)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 2, 100)).Unref()
 	expectInitialized(2)
 	c.EvictAll(func(k intKey) bool {
 		return k%2 == 1
 	})
 	expectReleased(1, 3)
-	testutils.CheckErr(c.FindOrCreate(ctx, 2)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 2, 100)).Unref()
 	expectInitialized()
-	testutils.CheckErr(c.FindOrCreate(ctx, 3)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 3, 100)).Unref()
 	expectInitialized(3)
 
 	c.Close()
@@ -160,7 +160,7 @@ func TestEvict(t *testing.T) {
 }
 
 func TestEvictPanic(t *testing.T) {
-	initFn := func(ctx context.Context, k intKey, v ValueRef[intKey, int]) error {
+	initFn := func(ctx context.Context, k intKey, _ interface{}, v ValueRef[intKey, int]) error {
 		*v.Value() = int(k)
 		return nil
 	}
@@ -171,17 +171,17 @@ func TestEvictPanic(t *testing.T) {
 	// test values.
 	c := New[intKey, int](20, 4, initFn, releaseFn)
 	ctx := context.Background()
-	testutils.CheckErr(c.FindOrCreate(ctx, 1)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 2)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 3)).Unref()
-	testutils.CheckErr(c.FindOrCreate(ctx, 4)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 1, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 2, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 3, 100)).Unref()
+	testutils.CheckErr(c.FindOrCreate(ctx, 4, 100)).Unref()
 
-	ref := testutils.CheckErr(c.FindOrCreate(ctx, 3))
+	ref := testutils.CheckErr(c.FindOrCreate(ctx, 3, 100))
 	require.Panics(t, func() {
 		c.Evict(3)
 	})
 	ref.Unref()
-	_, _ = c.FindOrCreate(ctx, 2)
+	_, _ = c.FindOrCreate(ctx, 2, 100)
 	require.Panics(t, func() {
 		c.Close()
 	})
@@ -189,7 +189,7 @@ func TestEvictPanic(t *testing.T) {
 
 func TestErrorHandling(t *testing.T) {
 	var fail atomic.Int32
-	initFn := func(ctx context.Context, k intKey, v ValueRef[intKey, int]) error {
+	initFn := func(ctx context.Context, k intKey, _ interface{}, v ValueRef[intKey, int]) error {
 		if errVal := fail.Load(); errVal != 0 {
 			time.Sleep(10 * time.Millisecond)
 			return errors.Newf("%d", errVal)
@@ -209,7 +209,7 @@ func TestErrorHandling(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := c.FindOrCreate(ctx, 1)
+			_, err := c.FindOrCreate(ctx, 1, 100)
 			require.ErrorContains(t, err, "1")
 		}()
 	}
@@ -217,12 +217,12 @@ func TestErrorHandling(t *testing.T) {
 
 	fail.Store(2)
 	// A new attempt should try again and return the new error.
-	_, err := c.FindOrCreate(ctx, 1)
+	_, err := c.FindOrCreate(ctx, 1, 100)
 	require.ErrorContains(t, err, "2")
 
 	fail.Store(0)
 	// A new attempt should succeed.
-	v, err := c.FindOrCreate(ctx, 1)
+	v, err := c.FindOrCreate(ctx, 1, 100)
 	require.NoError(t, err)
 	require.Equal(t, *v.Value(), 1)
 	v.Unref()

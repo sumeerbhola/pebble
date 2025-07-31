@@ -121,7 +121,7 @@ func (s *shard[K, V]) clearNode(n *node[K, V]) {
 // created and initialized (evicting as necessary).
 //
 // The caller is responsible for unrefing the value.
-func (s *shard[K, V]) findOrCreateValue(ctx context.Context, key K) *value[V] {
+func (s *shard[K, V]) findOrCreateValue(ctx context.Context, key K, param interface{}) *value[V] {
 	// Fast-path for a hit in the cache.
 	s.mu.RLock()
 	if n := s.mu.nodes[key]; n != nil && n.value != nil {
@@ -188,7 +188,7 @@ func (s *shard[K, V]) findOrCreateValue(ctx context.Context, key K) *value[V] {
 		value: v,
 	}
 
-	v.err = s.initValueFn(ctx, key, vRef)
+	v.err = s.initValueFn(ctx, key, param, vRef)
 	if v.err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()

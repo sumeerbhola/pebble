@@ -254,12 +254,11 @@ func (h *fileCacheHandle) findOrCreateTable(
 	ctx context.Context, meta *manifest.TableMetadata,
 ) (genericcache.ValueRef[fileCacheKey, fileCacheValue], error) {
 	key := fileCacheKey{
-		handle:        h,
-		fileNum:       meta.TableBacking.DiskFileNum,
-		fileType:      base.FileTypeTable,
-		optionalLevel: meta.InitialLevel,
+		handle:   h,
+		fileNum:  meta.TableBacking.DiskFileNum,
+		fileType: base.FileTypeTable,
 	}
-	valRef, err := h.fileCache.c.FindOrCreate(ctx, key)
+	valRef, err := h.fileCache.c.FindOrCreate(ctx, key, meta.InitialLevel)
 	if err != nil && IsCorruptionError(err) {
 		err = h.reportCorruptionFn(meta, err)
 	}
@@ -277,7 +276,7 @@ func (h *fileCacheHandle) findOrCreateBlob(
 		fileNum:  fileNum,
 		fileType: base.FileTypeBlob,
 	}
-	valRef, err := h.fileCache.c.FindOrCreate(ctx, key)
+	valRef, err := h.fileCache.c.FindOrCreate(ctx, key, 100)
 	// TODO(jackson): Propagate a blob metadata object here.
 	if err != nil && IsCorruptionError(err) {
 		err = h.reportCorruptionFn(nil, err)
@@ -454,7 +453,7 @@ func NewFileCache(numShards int, size int) *FileCache {
 	c := &FileCache{}
 
 	// initFn is used whenever a new entry is added to the file cache.
-	initFn := func(ctx context.Context, key fileCacheKey, vRef genericcache.ValueRef[fileCacheKey, fileCacheValue]) error {
+	initFn := func(ctx context.Context, key fileCacheKey, param interface{}, vRef genericcache.ValueRef[fileCacheKey, fileCacheValue]) error {
 		v := vRef.Value()
 		handle := key.handle
 		v.readerProvider.init(c, key)
@@ -465,7 +464,8 @@ func NewFileCache(numShards int, size int) *FileCache {
 			vRef.Unref()
 			handle.iterCount.Add(-1)
 		}
-		reader, objMeta, err := handle.openFile(ctx, key.fileNum, key.fileType, key.optionalLevel)
+		optionalLevel := param.(int)
+		reader, objMeta, err := handle.openFile(ctx, key.fileNum, key.fileType, optionalLevel)
 		if err != nil {
 			return errors.Wrapf(err, "pebble: backing file %s error", redact.Safe(key.fileNum))
 		}
@@ -511,8 +511,6 @@ type fileCacheKey struct {
 	// to propagate the type so the file cache looks for the correct file in
 	// object storage / the filesystem.
 	fileType base.FileType
-
-	optionalLevel int
 }
 
 // Shard implements the genericcache.Key interface.
@@ -926,7 +924,7 @@ func (rp *tableCacheShardReaderProvider) GetReader(
 	// longer in the cache, FindOrCreate will need to do IO (through initFn in
 	// NewFileCache) to initialize a new Reader. We hold rp.mu during this time so
 	// that concurrent GetReader calls block until the Reader is created.
-	r, err := rp.c.FindOrCreate(ctx, rp.key)
+	r, err := rp.c.FindOrCreate(ctx, rp.key, 100)
 	if err != nil {
 		return nil, err
 	}

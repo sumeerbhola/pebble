@@ -37,7 +37,7 @@ type Key interface {
 //
 // It is guaranteed that there will be no concurrent calls to InitValueFn() with
 // the same key.
-type InitValueFn[K Key, V any] func(context.Context, K, ValueRef[K, V]) error
+type InitValueFn[K Key, V any] func(context.Context, K, interface{}, ValueRef[K, V]) error
 
 // ReleaseValueFn is called to release a value that is no longer used
 // (specifically: it was evicted from the cache AND there are no outstanding
@@ -79,9 +79,11 @@ func (c *Cache[K, V]) Close() {
 // FindOrCreate retrieves an existing value or creates a new value for the given
 // key. The result can be accessed via ValueRef.Value(). The caller must call
 // ValueRef.Close() when it no longer needs the value.
-func (c *Cache[K, V]) FindOrCreate(ctx context.Context, key K) (ValueRef[K, V], error) {
+func (c *Cache[K, V]) FindOrCreate(
+	ctx context.Context, key K, param interface{},
+) (ValueRef[K, V], error) {
 	shard := c.getShard(key)
-	value := shard.findOrCreateValue(ctx, key)
+	value := shard.findOrCreateValue(ctx, key, param)
 	if err := value.err; err != nil {
 		shard.UnrefValue(value)
 		return ValueRef[K, V]{}, err
