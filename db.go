@@ -2829,3 +2829,30 @@ func (d *DB) removeFromOngoingExcises(seqNum base.SeqNum) {
 	delete(d.mu.snapshots.ongoingExcises, seqNum)
 	d.mu.snapshots.ongoingExcisesRemovedCond.Broadcast()
 }
+
+// WaitForMemTableCount blocks until the number of memtables is <=
+// leThreshold. This is not optimized to be very efficient, so it is
+// preferable that it is only called by a few callers, who cache the result
+// for a short duration (say 100ms).
+func (d *DB) WaitForMemTableCount(ctx context.Context, leThreshold int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for {
+		// NB: the queue contains all flushables, and not just memtables. We first
+		// do the cheap check, since most flushables other than memtables will
+		// have totalBytes() < the opts.MemTableSize. Huge batches are an
+		// exception, but they shouldn't be happening in the CockroachDB context
+		// (because of limits at higher layers).
+		if len(d.mu.mem.queue) <= leThreshold {
+			return nil
+		}
+		var size uint64
+		for i := range d.mu.mem.queue {
+			size += d.mu.mem.queue[i].totalBytes()
+		}
+		if size <= uint64(leThreshold)*d.opts.MemTableSize {
+			return nil
+		}
+		d.mu.compact.cond.Wait()
+	}
+}
