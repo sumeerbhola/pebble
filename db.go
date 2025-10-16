@@ -1522,6 +1522,9 @@ func (d *DB) Close() error {
 	for d.mu.compact.compactingCount > 0 || d.mu.compact.downloadingCount > 0 || d.mu.compact.flushing {
 		d.mu.compact.cond.Wait()
 	}
+	// Notify others who may be waiting, like callers of WaitForMemTableCount.
+	d.mu.compact.cond.Broadcast()
+
 	for d.mu.tableStats.loading {
 		d.mu.tableStats.cond.Wait()
 	}
@@ -2811,4 +2814,40 @@ func (d *DB) DebugCurrentVersion() *manifest.Version {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.mu.versions.currentVersion()
+}
+
+// TryWaitForMemTableCount return true if the number of memtables is <=
+// leThreshold. If doWait is true, it waits until this condition becomes true,
+// and therefore will always return true.
+//
+// This is not optimized to be very efficient, so it is preferable that it is
+// only called by a few callers, who cache the result for a short duration
+// (say 10ms).
+func (d *DB) TryWaitForMemTableCount(leThreshold int, doWait bool) (ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for {
+		// NB: the queue contains all flushables, and not just memtables. We first
+		// do the cheap check, since most flushables other than memtables will
+		// have totalBytes() < the opts.MemTableSize. Huge batches are an
+		// exception, but they shouldn't be happening in the CockroachDB context
+		// (because of limits at higher layers).
+		if len(d.mu.mem.queue) <= leThreshold {
+			return true
+		}
+		var size uint64
+		for i := range d.mu.mem.queue {
+			size += d.mu.mem.queue[i].totalBytes()
+		}
+		if size <= uint64(leThreshold)*d.opts.MemTableSize {
+			return true
+		}
+		if !doWait {
+			return false
+		}
+		d.mu.compact.cond.Wait()
+		if d.closed.Load() != nil {
+			return true
+		}
+	}
 }
