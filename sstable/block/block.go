@@ -298,6 +298,12 @@ func (env *ReadEnv) BlockServedFromCache(kind Kind, blockLength uint64) {
 		env.Stats.BlockReads[kind].CountInCache++
 		env.Stats.BlockReads[kind].BlockBytes += blockLength
 		env.Stats.BlockReads[kind].BlockBytesInCache += blockLength
+		if kind == blockkind.SSTableData {
+			level, valid := env.Level.Get()
+			if valid {
+				env.Stats.SSTableDataBlockLevels[level].Count++
+			}
+		}
 	}
 	if env.IterStats != nil {
 		env.IterStats.Accumulate(blockLength, blockLength, 0)
@@ -310,6 +316,12 @@ func (env *ReadEnv) BlockRead(kind Kind, blockLength uint64, readDuration time.D
 		env.Stats.BlockReads[kind].Count++
 		env.Stats.BlockReads[kind].BlockBytes += blockLength
 		env.Stats.BlockReads[kind].BlockReadDuration += readDuration
+		if kind == blockkind.SSTableData {
+			level, valid := env.Level.Get()
+			if valid {
+				env.Stats.SSTableDataBlockLevels[level].Count++
+			}
+		}
 	}
 	if env.IterStats != nil {
 		env.IterStats.Accumulate(blockLength, 0, readDuration)

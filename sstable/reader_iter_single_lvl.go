@@ -186,6 +186,7 @@ type singleLevelIterator[I any, PI indexBlockIterator[I], D any, PD dataBlockIte
 
 	index I
 	data  D
+	dataBlockReachedTopOfHeap bool
 	// inPool is set to true before putting the iterator in the reusable pool;
 	// used to detect double-close.
 	inPool bool
@@ -227,7 +228,7 @@ func newColumnBlockSingleLevelIterator(
 			i, opts.ReaderProvider, r.valueBIH, opts.Env.Block.Stats, opts.Env.Block.IterStats)
 		i.vbRH = r.blockReader.UsePreallocatedReadHandle(objstorage.NoReadBefore, &i.vbRHPrealloc)
 	}
-	i.data.InitOnce(r.keySchema, r.Comparer, &i.internalValueConstructor)
+	i.data.InitOnce(r.keySchema, r.Comparer, &i.internalValueConstructor, i)
 
 	return i, nil
 }
@@ -260,6 +261,7 @@ func newRowBlockSingleLevelIterator(
 		}
 		i.data.SetHasValuePrefix(true)
 	}
+	i.data.SetAtTopOfHeap(i)
 
 	return i, nil
 }
@@ -509,6 +511,7 @@ func (i *singleLevelIterator[I, PI, P, PD]) loadDataBlock(dir int8) loadBlockRes
 		i.err = err
 		return loadBlockFailed
 	}
+	i.dataBlockReachedTopOfHeap = false
 	i.err = PD(&i.data).InitHandle(i.reader.Comparer, block, i.transforms)
 	if i.err != nil {
 		// The block is partially loaded, and we don't want it to appear valid.
@@ -520,6 +523,21 @@ func (i *singleLevelIterator[I, PI, P, PD]) loadDataBlock(dir int8) loadBlockRes
 		treesteps.NodeUpdated(i, fmt.Sprintf("loadDataBlock(%d) offset=%d length=%d", dir, i.dataBH.Offset, i.dataBH.Length))
 	}
 	return loadBlockOK
+}
+
+// NotifyAtTopOfHeap implements base.AtTopOfHeap.
+func (i *singleLevelIterator[I, PI, D, PD]) NotifyAtTopOfHeap() {
+	if i.dataBlockReachedTopOfHeap {
+		return
+	}
+	i.dataBlockReachedTopOfHeap = true
+	if i.readEnv.Block.Stats != nil {
+		level, valid := i.readEnv.Block.Level.Get()
+		if !valid {
+			return
+		}
+		i.readEnv.Block.Stats.SSTableDataBlockLevels[level].CountReachedTopOfHeap++
+	}
 }
 
 // ReadValueBlock implements the valblk.IteratorBlockReader interface.

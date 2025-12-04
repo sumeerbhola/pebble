@@ -199,7 +199,7 @@ stats
 ----
 lastPositioningOp="unknown"
 b@5: (b@5, .)
-stats: seeked 1 times (1 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s); points: 1 (3B keys, 3B values)
+stats: seeked 1 times (1 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 1 (3B keys, 3B values)
 
 mutate batch=foo
 set h@2 h@2
@@ -214,7 +214,7 @@ stats
 .
 lastPositioningOp="seekprefixge"
 c@3: (c@3, .)
-stats: seeked 2 times (2 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s); points: 2 (6B keys, 6B values)
+stats: seeked 2 times (2 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 2 (6B keys, 6B values)
 
 mutate batch=foo
 set i@1 i@1
@@ -229,7 +229,7 @@ stats
 .
 lastPositioningOp="seekprefixge"
 d@9: (d@9, .)
-stats: seeked 3 times (3 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s); points: 3 (9B keys, 9B values)
+stats: seeked 3 times (3 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 3 (9B keys, 9B values)
 
 mutate batch=foo
 set j@6 j@6
@@ -244,7 +244,7 @@ stats
 .
 lastPositioningOp="seekprefixge"
 e@8: (e@8, .)
-stats: seeked 4 times (4 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s); points: 4 (12B keys, 12B values)
+stats: seeked 4 times (4 internal); stepped 0 times (0 internal); blocks: 0B cached, 530B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 4 (12B keys, 12B values)
 
 # Ensure that a case eligible for TrySeekUsingNext across a SetOptions correctly
 # sees new batch mutations. The batch iterator should ignore the
@@ -617,10 +617,14 @@ L6:
 
 combined-iter upper=z@3 mask-suffix=@3 mask-filter use-l6-filter
 seek-prefix-ge b@2
+stats
 seek-prefix-ge c@2
+stats
 ----
 b@2: (g, .)
+stats: seeked 1 times (1 internal); stepped 0 times (1 internal); blocks: 46B cached, 118B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 1 (3B keys, 1B values)
 c@2: (., [c-"c\x00") @5=bar UPDATED)
+stats: seeked 2 times (2 internal); stepped 0 times (2 internal); blocks: 115B cached, 118B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 1 (3B keys, 1B values), range keys: 1, contained points: 0 (0 skipped)
 
 # Regression test for Cockroachdb#92205. This test constructs this scenario:
 #
@@ -713,7 +717,30 @@ L6:
 
 combined-iter upper=z@3 use-l6-filter
 seek-prefix-ge b@6
+stats
 seek-prefix-ge d@5
+stats
 ----
 .
+stats: seeked 1 times (1 internal); stepped 0 times (1 internal); blocks: 0B cached, 661B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1); points: 1 (3B keys, 0B values)
 d@4: (foo, .)
+stats: seeked 2 times (2 internal); stepped 0 times (1 internal); blocks: 69B cached, 1.2KB not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1) (L6,1,1); points: 2 (6B keys, 3B values)
+
+combined-iter
+seek-ge b@6
+stats
+next
+stats
+next
+stats
+next
+stats
+----
+d@4: (foo, .)
+stats: seeked 1 times (1 internal); stepped 0 times (1 internal); blocks: 165B cached, 21B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1) (L6,1,1); points: 2 (6B keys, 3B values)
+f@5: (bar, .)
+stats: seeked 1 times (1 internal); stepped 1 times (2 internal); blocks: 165B cached, 581B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1) (L6,2,2); points: 4(1 tombstoned) (12B keys, 12B values)
+g@5: (baz, .)
+stats: seeked 1 times (1 internal); stepped 2 times (3 internal); blocks: 165B cached, 581B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1) (L6,2,2); points: 5(1 tombstoned) (15B keys, 15B values)
+.
+stats: seeked 1 times (1 internal); stepped 3 times (4 internal); blocks: 165B cached, 581B not cached (read time: 0s), sstable-data(level,count,at-top): (L0,1,1) (L6,2,2); points: 5(1 tombstoned) (15B keys, 15B values)

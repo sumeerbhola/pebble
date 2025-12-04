@@ -42,7 +42,7 @@ func runDataDrivenTest(t *testing.T, path string) {
 	var e colblk.DataBlockEncoder
 	e.Init(&KeySchema)
 	var iter colblk.DataBlockIter
-	iter.InitOnce(&KeySchema, &Comparer, nil)
+	iter.InitOnce(&KeySchema, &Comparer, nil, nil)
 
 	datadriven.RunTest(t, path, func(t *testing.T, td *datadriven.TestData) string {
 		switch td.Cmd {
@@ -147,7 +147,7 @@ func TestKeySchema_RandomKeys(t *testing.T) {
 	var dec colblk.DataBlockDecoder
 	bd := dec.Init(&KeySchema, blk)
 	var it colblk.DataBlockIter
-	it.InitOnce(&KeySchema, &Comparer, nil)
+	it.InitOnce(&KeySchema, &Comparer, nil, nil)
 	require.NoError(t, it.Init(&dec, bd, blockiter.NoTransforms))
 	// Ensure that a scan across the block finds all the relevant keys.
 	var valBuf []byte

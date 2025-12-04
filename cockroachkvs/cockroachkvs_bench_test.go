@@ -317,7 +317,7 @@ func benchmarkCockroachDataColBlockIter(
 	var it colblk.DataBlockIter
 	it.InitOnce(&KeySchema, &Comparer, getInternalValuer(func([]byte) base.InternalValue {
 		return base.MakeInPlaceValue([]byte("mock external value"))
-	}))
+	}), nil)
 	bd := decoder.Init(&KeySchema, serializedBlock)
 	if err := it.Init(&decoder, bd, transforms); err != nil {
 		b.Fatal(err)

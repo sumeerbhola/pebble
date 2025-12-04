@@ -461,7 +461,7 @@ func formatColblkDataBlock(
 
 	if fmtKV != nil {
 		var iter colblk.DataBlockIter
-		iter.InitOnce(r.keySchema, r.Comparer, describingLazyValueHandler{})
+		iter.InitOnce(r.keySchema, r.Comparer, describingLazyValueHandler{}, nil)
 		if err := iter.Init(&decoder, bd, blockiter.Transforms{}); err != nil {
 			return err
 		}

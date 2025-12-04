@@ -568,6 +568,7 @@ func (m *mergingIter) nextEntry(l *mergingIterLevel, succKey []byte) error {
 		}
 		m.heap.pop()
 	} else {
+		m.heap.steppedTop()
 		if m.prefix != nil && !bytes.Equal(m.prefix, m.split.Prefix(l.iterKV.K.UserKey)) {
 			// Set keys without a matching prefix to their zero values when in prefix
 			// iteration mode and remove iterated level from heap.
@@ -781,6 +782,7 @@ func (m *mergingIter) prevEntry(l *mergingIterLevel) error {
 	oldTopLevel := l.index
 	oldRangeDelIterGeneration := l.rangeDelIterGeneration
 	if l.iterKV = l.iter.Prev(); l.iterKV != nil {
+		m.heap.steppedTop()
 		if m.heap.len() > 1 {
 			m.heap.fixTop()
 		}

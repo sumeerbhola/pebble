@@ -405,6 +405,22 @@ func (s *BlockReadStats) Add(other BlockReadStats) {
 	s.BlockReadDuration += other.BlockReadDuration
 }
 
+type SSTableDataBlockLevelStats struct {
+	// Count is the count of sstable data blocks loaded.
+	Count uint64
+	// CountReachedTopOfHeap is the count of sstable data blocks that reached
+	// the top of the heap.
+	CountReachedTopOfHeap uint64
+}
+
+func (s *SSTableDataBlockLevelStats) Add(other SSTableDataBlockLevelStats) {
+	s.Count += other.Count
+	s.CountReachedTopOfHeap += other.CountReachedTopOfHeap
+}
+
+// TODO: consolidate declaration of NumLevels const.
+const NumLevels = 7
+
 // InternalIteratorStats contains miscellaneous stats produced by
 // InternalIterators that are part of the InternalIterator tree. Not every
 // field is relevant for an InternalIterator implementation. The field values
@@ -413,6 +429,10 @@ type InternalIteratorStats struct {
 	// BlockReads is the count of block reads performed by the iterator by
 	// type.
 	BlockReads [blockkind.NumKinds]BlockReadStats
+	// When the levels are populated in block.ReadEnv.Level,
+	// Sum_i(SSTableDataBlockLevels[i].Count) ==
+	// BlockReads[SSTableData].Count.
+	SSTableDataBlockLevels [NumLevels]SSTableDataBlockLevelStats
 
 	// The following can repeatedly count the same points if they are iterated
 	// over multiple times. Additionally, they may count a point twice when
@@ -465,6 +485,9 @@ func (s *InternalIteratorStats) Merge(from InternalIteratorStats) {
 	for i := range blockkind.NumKinds {
 		s.BlockReads[i].Add(from.BlockReads[i])
 	}
+	for i := range from.SSTableDataBlockLevels {
+		s.SSTableDataBlockLevels[i].Add(from.SSTableDataBlockLevels[i])
+	}
 	s.KeyBytes += from.KeyBytes
 	s.ValueBytes += from.ValueBytes
 	s.PointCount += from.PointCount
@@ -499,6 +522,23 @@ func (s *InternalIteratorStats) SafeFormat(p redact.SafePrinter, verb rune) {
 			humanize.Bytes.Uint64(total.BlockBytes-total.BlockBytesInCache),
 			humanize.FormattedString(total.BlockReadDuration.String()),
 		)
+	}
+	hasLevelStats := false
+	for i := range s.SSTableDataBlockLevels {
+		if s.SSTableDataBlockLevels[i].Count > 0 {
+			hasLevelStats = true
+			break
+		}
+	}
+	if hasLevelStats {
+		p.Printf(", sstable-data(level,count,at-top):")
+		for i := range s.SSTableDataBlockLevels {
+			if s.SSTableDataBlockLevels[i].Count == 0 {
+				continue
+			}
+			p.Printf(" (L%d,%s,%s)", i, humanize.Count.Uint64(s.SSTableDataBlockLevels[i].Count),
+				humanize.Count.Uint64(s.SSTableDataBlockLevels[i].CountReachedTopOfHeap))
+		}
 	}
 	p.Printf("; points: %s", humanize.Count.Uint64(s.PointCount))
 

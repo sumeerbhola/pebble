@@ -304,7 +304,10 @@ func (i *Iter) SetHasValuePrefix(hasValuePrefix bool) {
 // lazy values when the value encodes a value prefix.
 func (i *Iter) SetGetLazyValuer(g block.GetInternalValueForPrefixAndValueHandler) {
 	i.lazyValueHandling.getValue = g
+}
 
+func (i *Iter) SetAtTopOfHeap(a base.AtTopOfHeap) {
+	i.ikv.AtTopOfHeap = a
 }
 
 // Handle returns the underlying block buffer handle, if the iterator was

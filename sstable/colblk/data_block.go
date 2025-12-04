@@ -719,7 +719,7 @@ func (rw *DataBlockRewriter) RewriteSuffixes(
 	input []byte, from []byte, to []byte,
 ) (start, end base.InternalKey, rewritten []byte, err error) {
 	if !rw.initialized {
-		rw.iter.InitOnce(rw.KeySchema, rw.comparer, assertNoExternalValues{})
+		rw.iter.InitOnce(rw.KeySchema, rw.comparer, assertNoExternalValues{}, nil)
 		rw.encoder.Init(rw.KeySchema)
 		rw.initialized = true
 	}
@@ -1038,15 +1038,19 @@ type DataBlockIter struct {
 // InitOnce configures the data block iterator's key schema and lazy value
 // handler. The iterator must be initialized with a block before it can be used.
 // It may be reinitialized with new blocks without calling InitOnce again.
+//
+// atTopOfHeap can be nil.
 func (i *DataBlockIter) InitOnce(
 	keySchema *KeySchema,
 	comparer *base.Comparer,
 	getLazyValuer block.GetInternalValueForPrefixAndValueHandler,
+	atTopOfHeap base.AtTopOfHeap,
 ) {
 	i.keySchema = keySchema
 	i.suffixCmp = comparer.ComparePointSuffixes
 	i.split = comparer.Split
 	i.getLazyValuer = getLazyValuer
+	i.kv.AtTopOfHeap = atTopOfHeap
 }
 
 // Init initializes the data block iterator, configuring it to read from the
@@ -1074,7 +1078,7 @@ func (i *DataBlockIter) Init(
 	maxKeyLength := int(i.transforms.SyntheticPrefixAndSuffix.PrefixLen() + d.maximumKeyLength + i.transforms.SyntheticPrefixAndSuffix.SuffixLen())
 	i.keyIter.Init(maxKeyLength, i.transforms.SyntheticPrefix())
 	i.row = -1
-	i.kv = base.InternalKV{}
+	i.kv = base.InternalKV{AtTopOfHeap: i.kv.AtTopOfHeap}
 	i.kvRow = math.MinInt
 	i.nextObsoletePoint = 0
 	return nil
@@ -1106,7 +1110,7 @@ func (i *DataBlockIter) InitHandle(
 	maxKeyLength := int(i.transforms.SyntheticPrefixAndSuffix.PrefixLen() + i.d.maximumKeyLength + i.transforms.SyntheticPrefixAndSuffix.SuffixLen())
 	i.keyIter.Init(maxKeyLength, i.transforms.SyntheticPrefix())
 	i.row = -1
-	i.kv = base.InternalKV{}
+	i.kv = base.InternalKV{AtTopOfHeap: i.kv.AtTopOfHeap}
 	i.kvRow = math.MinInt
 	i.nextObsoletePoint = 0
 	i.keySeeker = i.keySchema.KeySeeker(keySeekerMeta)

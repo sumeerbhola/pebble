@@ -38,7 +38,7 @@ func TestDataBlock(t *testing.T) {
 	it.InitOnce(&testKeysSchema, testkeys.Comparer,
 		getInternalValuer(func([]byte) base.InternalValue {
 			return base.MakeInPlaceValue([]byte("mock external value"))
-		}))
+		}), nil)
 
 	datadriven.Walk(t, "testdata/data_block", func(t *testing.T, path string) {
 		datadriven.RunTest(t, path, func(t *testing.T, td *datadriven.TestData) string {

@@ -76,12 +76,38 @@ func (h *mergingIterHeap) init() {
 	for i := n/2 - 1; i >= 0; i-- {
 		h.down(i, n)
 	}
+	if n > 0 {
+		h.items[0].iterKV.NotifyAtTopOfHeap()
+	}
+}
+
+// steppedTop is called after the existing top is stepped. It is possible that
+// it will no longer be the top, since the caller may subsequently call pop
+// (even if the top is not exhausted), or the caller may call fixTop and
+// someone else became the top. But this new key-value was transiently at the
+// top and needs to be recorded as such, for the correct
+// SSTableDataBlockLevelStats.CountReachedTopOfHeap (since we couldn't have
+// avoided loading it).
+//
+// TODO: there is something confusing about what we are collecting these stats
+// for. Is it for bloom filter. Or is it for fewer levels. We should try to
+// have stats that can inform many decisions. Also, we are collecting these
+// for non-prefix iteration too.
+//
+// TODO: how will these InternalIteratorStats get aggregated at the Pebble
+// level for metrics to export?
+func (h *mergingIterHeap) steppedTop() {
+	h.items[0].iterKV.NotifyAtTopOfHeap()
 }
 
 // fixTop restores the heap property after the top of the heap has been
 // modified.
 func (h *mergingIterHeap) fixTop() {
-	h.down(0, h.len())
+	n := h.len()
+	h.down(0, n)
+	if n > 0 {
+		h.items[0].iterKV.NotifyAtTopOfHeap()
+	}
 }
 
 // pop removes the top of the heap.
@@ -95,6 +121,9 @@ func (h *mergingIterHeap) pop() *mergingIterLevel {
 	h.down(0, n)
 	item := h.items[n]
 	h.items = h.items[:n]
+	if n > 0 {
+		h.items[0].iterKV.NotifyAtTopOfHeap()
+	}
 	return item.mergingIterLevel
 }
 

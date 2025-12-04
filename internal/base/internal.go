@@ -625,10 +625,14 @@ func MakeInternalKV(k InternalKey, v []byte) InternalKV {
 	}
 }
 
+type AtTopOfHeap interface {
+	NotifyAtTopOfHeap()
+}
 // InternalKV represents a single internal key-value pair.
 type InternalKV struct {
 	K InternalKey
 	V InternalValue
+	AtTopOfHeap AtTopOfHeap
 }
 
 // Kind returns the KV's internal key kind.
@@ -654,6 +658,13 @@ func (kv *InternalKV) LazyValue() LazyValue {
 // Value returns the KV's underlying value.
 func (kv *InternalKV) Value(buf []byte) (val []byte, callerOwned bool, err error) {
 	return kv.V.Value(buf)
+}
+
+func (kv *InternalKV) NotifyAtTopOfHeap() {
+	if kv.AtTopOfHeap == nil {
+		return
+	}
+	kv.AtTopOfHeap.NotifyAtTopOfHeap()
 }
 
 // Visible returns true if the key is visible at the specified snapshot

@@ -412,7 +412,7 @@ func testCockroachDataColBlock(t *testing.T, seed uint64, keyCfg KeyGenConfig) {
 	var it colblk.DataBlockIter
 	it.InitOnce(&KeySchema, &Comparer, getInternalValuer(func([]byte) base.InternalValue {
 		return base.MakeInPlaceValue([]byte("mock external value"))
-	}))
+	}), nil)
 	bd := decoder.Init(&KeySchema, serializedBlock)
 	if err := it.Init(&decoder, bd, blockiter.Transforms{}); err != nil {
 		t.Fatal(err)

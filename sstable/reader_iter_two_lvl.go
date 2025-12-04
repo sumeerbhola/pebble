@@ -200,7 +200,8 @@ func newColumnBlockTwoLevelIterator(
 		i.secondLevel.vbRH = r.blockReader.UsePreallocatedReadHandle(
 			objstorage.NoReadBefore, &i.secondLevel.vbRHPrealloc)
 	}
-	i.secondLevel.data.InitOnce(r.keySchema, r.Comparer, &i.secondLevel.internalValueConstructor)
+	i.secondLevel.data.InitOnce(
+		r.keySchema, r.Comparer, &i.secondLevel.internalValueConstructor, &i.secondLevel)
 
 	return i, nil
 }
@@ -249,6 +250,7 @@ func newRowBlockTwoLevelIterator(
 		}
 		i.secondLevel.data.SetHasValuePrefix(true)
 	}
+	i.secondLevel.data.SetAtTopOfHeap(&i.secondLevel)
 
 	return i, nil
 }
