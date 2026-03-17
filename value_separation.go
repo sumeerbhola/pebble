@@ -100,12 +100,14 @@ func shouldWriteBlobFiles(
 		// None of the input sstables reference blob files. It may be the case
 		// that these sstables were created before value separation was enabled.
 		// We should try to write to new blob files.
+		c.annotations = append(c.annotations, "write-blobs-input-depth-zero")
 		return true, 0
 	}
 	// If the compaction's output blob reference depth would be greater than the
 	// configured max, we should rewrite the values into new blob files to
 	// restore locality.
 	if inputReferenceDepth > manifest.BlobReferenceDepth(policy.MaxBlobReferenceDepth) {
+		c.annotations = append(c.annotations, "write-blobs-input-depth-exceeded")
 		return true, 0
 	}
 	// Otherwise, we won't write any new blob files but will carry forward
